@@ -36,8 +36,13 @@ pub fn has_positive_anchor(expr: &Expr) -> bool {
 fn is_positive_anchor(pred: &Predicate) -> bool {
     match pred {
         Predicate::Text { .. } => true, // FTS queries are positive anchors
-        Predicate::Keyword { kind, .. } => {
-            matches!(kind, KeywordPatternKind::Exact) // Only exact matches are positive
+        Predicate::Keyword { kind, pattern, .. } => {
+            match kind {
+                KeywordPatternKind::Exact => true, // Exact matches are positive
+                KeywordPatternKind::Prefix => has_literal_prefix(pattern), // Wildcards with literal prefix are positive
+                KeywordPatternKind::Contains => has_literal_prefix(pattern), // Contains with literal prefix is positive
+                KeywordPatternKind::Glob => has_literal_prefix(pattern), // Glob with literal prefix is positive
+            }
         }
         Predicate::PathGlob { pattern } => {
             // Path is positive if it has a literal prefix
