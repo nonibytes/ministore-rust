@@ -48,6 +48,12 @@ fn is_positive_anchor(pred: &Predicate) -> bool {
             // Path is positive if it has a literal prefix
             has_literal_prefix(pattern)
         }
+        // Date and number predicates are positive anchors (they target indexed fields)
+        Predicate::DateCmpAbs { .. } => true,
+        Predicate::DateRangeAbs { .. } => true,
+        Predicate::DateCmpRel { .. } => true,
+        Predicate::NumberCmp { .. } => true,
+        Predicate::NumberRange { .. } => true,
         _ => false,
     }
 }
