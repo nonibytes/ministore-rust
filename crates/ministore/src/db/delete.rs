@@ -2,6 +2,15 @@ use rusqlite::Transaction;
 use crate::Result;
 use super::sql::*;
 
+fn is_no_such_table_search(e: &rusqlite::Error) -> bool {
+    match e {
+        rusqlite::Error::SqliteFailure(err, Some(msg)) => {
+            err.code == rusqlite::ErrorCode::Unknown && msg.contains("no such table: search")
+        }
+        _ => false,
+    }
+}
+
 /// Delete an item by its internal ID, adjusting doc_freq counts.
 pub fn delete_by_item_id(tx: &Transaction, item_id: i64) -> Result<()> {
     // Collect value_ids that need doc_freq decremented
@@ -21,7 +30,11 @@ pub fn delete_by_item_id(tx: &Transaction, item_id: i64) -> Result<()> {
     tx.execute(SQL_DELETE_DATE_BY_ITEM, [item_id])?;
     tx.execute(SQL_DELETE_BOOL_BY_ITEM, [item_id])?;
     tx.execute(SQL_DELETE_PRESENT_BY_ITEM, [item_id])?;
-    tx.execute(SQL_DELETE_SEARCH_ROW, [item_id])?;
+    if let Err(e) = tx.execute(SQL_DELETE_SEARCH_ROW, [item_id]) {
+        if !is_no_such_table_search(&e) {
+            return Err(e.into());
+        }
+    }
     tx.execute(SQL_DELETE_ITEMS_BY_ID, [item_id])?;
     
     Ok(())

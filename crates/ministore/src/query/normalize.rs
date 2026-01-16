@@ -99,7 +99,25 @@ fn validate_predicate_pattern(pred: &Predicate) -> Result<()> {
                         ));
                     }
                 }
-                _ => {} // Exact and Glob don't need validation
+                KeywordPatternKind::Glob => {
+                    // Require a literal prefix before any wildcard (performance guardrail).
+                    if pattern.contains(&['*', '?'][..]) {
+                        if let Some(pos) = pattern.find(&['*', '?'][..]) {
+                            let prefix = &pattern[..pos];
+                            if prefix.is_empty() {
+                                return Err(MinistoreError::QueryRejected(
+                                    "glob pattern must have a literal prefix before wildcards".into()
+                                ));
+                            }
+                            if prefix.len() < MIN_PREFIX_LEN {
+                                return Err(MinistoreError::QueryRejected(
+                                    format!("glob prefix '{}' too short (minimum {} characters)", prefix, MIN_PREFIX_LEN)
+                                ));
+                            }
+                        }
+                    }
+                }
+                _ => {} // Exact doesn't need validation
             }
         }
         Predicate::PathGlob { pattern } => {

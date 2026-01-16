@@ -57,10 +57,17 @@ pub fn run(args: SearchArgs) -> Result<()> {
     // Parse format
     let format = args.format.parse::<OutputFormat>().unwrap_or(OutputFormat::Pretty);
     
+    // Parse cursor mode
+    let cursor_mode = match args.cursor.as_str() {
+        "short" => CursorMode::Short,
+        "full" => CursorMode::Full,
+        _ => CursorMode::Full, // default
+    };
+    
     let opts = SearchOptions {
         limit: args.limit,
         after: args.after,
-        cursor_mode: CursorMode::Full, // Defaulting to full for CLI
+        cursor_mode,
         rank,
         show,
         explain: args.explain,

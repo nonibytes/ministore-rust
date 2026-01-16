@@ -278,6 +278,14 @@ fn execute_put_internal(
     _updated_at_ms: i64,
 ) -> Result<()> {
     use super::sql::*;
+    fn is_no_such_table_search(e: &rusqlite::Error) -> bool {
+        match e {
+            rusqlite::Error::SqliteFailure(err, Some(msg)) => {
+                err.code == rusqlite::ErrorCode::Unknown && msg.contains("no such table: search")
+            }
+            _ => false,
+        }
+    }
 
     // Track old keyword value_ids BEFORE deleting postings.
     let old_value_ids: HashSet<i64> = tx
@@ -291,7 +299,11 @@ fn execute_put_internal(
     tx.execute(SQL_DELETE_DATE_BY_ITEM, [item_id])?;
     tx.execute(SQL_DELETE_BOOL_BY_ITEM, [item_id])?;
     tx.execute(SQL_DELETE_PRESENT_BY_ITEM, [item_id])?;
-    tx.execute(SQL_DELETE_SEARCH_ROW, [item_id])?;
+    if let Err(e) = tx.execute(SQL_DELETE_SEARCH_ROW, [item_id]) {
+        if !is_no_such_table_search(&e) {
+            return Err(e.into());
+        }
+    }
 
     // Insert field_present
     for field in &prep.present_fields {
@@ -364,7 +376,11 @@ fn execute_put_internal(
         for text_val in &prep.text_cols {
             params.push(text_val.clone().into());
         }
-        tx.execute(&sql, rusqlite::params_from_iter(params))?;
+        if let Err(e) = tx.execute(&sql, rusqlite::params_from_iter(params)) {
+            if !is_no_such_table_search(&e) {
+                return Err(e.into());
+            }
+        }
     }
 
     Ok(())

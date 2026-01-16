@@ -1,6 +1,17 @@
 use crate::{Result, Schema, MinistoreError, FieldType};
 use crate::query::ast::*;
 use crate::index::RankMode;
+use chrono::{NaiveDate, DateTime};
+
+fn parse_date_to_epoch_ms(s: &str) -> Result<i64> {
+    if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Ok(date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis());
+    }
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Ok(dt.timestamp_millis());
+    }
+    Err(MinistoreError::QueryParse(format!("invalid date format: {}", s)))
+}
 
 #[derive(Debug, Clone)]
 pub struct CompileOutput {
@@ -167,6 +178,24 @@ impl<'a> Compiler<'a> {
             }
             
             Predicate::Keyword { field, pattern, kind } => {
+                // Implicit created/updated support for equality: created:2024-01-01
+                if field == "created" || field == "updated" {
+                    if kind != KeywordPatternKind::Exact {
+                        return Err(MinistoreError::TypeMismatch {
+                            field,
+                            message: "wildcards not supported for implicit date fields".into(),
+                        });
+                    }
+                    let epoch_ms = parse_date_to_epoch_ms(&pattern)?;
+                    let result_name = self.next_cte_name();
+                    let col = if field == "created" { "created_at" } else { "updated_at" };
+                    let p = self.push_param(epoch_ms.into());
+                    let sql = format!("SELECT id AS item_id FROM items WHERE {} = {}", col, p);
+                    self.ctes.push(Cte { name: result_name.clone(), sql });
+                    self.explain.push(format!("IMPLICIT DATE {}:{}", field, pattern));
+                    return Ok(result_name);
+                }
+
                 let spec = self.schema.get(&field).ok_or_else(|| MinistoreError::UnknownField(field.clone()))?;
 
                 // If schema says this is a TEXT field, treat field:term as FTS query.
@@ -176,6 +205,21 @@ impl<'a> Compiler<'a> {
                 // Bool fields: accept true/false via field:...
                 if spec.field_type == FieldType::Bool && (pattern == "true" || pattern == "false") {
                     return self.compile_predicate(Predicate::Bool { field, value: pattern == "true" });
+                }
+                // Date fields: support equality via field:YYYY-MM-DD (exact only)
+                if spec.field_type == FieldType::Date {
+                    if kind != KeywordPatternKind::Exact {
+                        return Err(MinistoreError::TypeMismatch {
+                            field,
+                            message: "wildcards not supported for date fields; use comparisons".into(),
+                        });
+                    }
+                    let epoch_ms = parse_date_to_epoch_ms(&pattern)?;
+                    return self.compile_predicate(Predicate::DateCmpAbs {
+                        field,
+                        op: CmpOp::Eq,
+                        epoch_ms,
+                    });
                 }
                 if spec.field_type != FieldType::Keyword {
                     return Err(MinistoreError::TypeMismatch {
@@ -360,6 +404,21 @@ impl<'a> Compiler<'a> {
             }
 
             Predicate::DateRangeAbs { field, lo_ms, hi_ms } => {
+                // implicit created/updated ranges compile to items table
+                if field == "created" || field == "updated" {
+                    let result_name = self.next_cte_name();
+                    let col = if field == "created" { "created_at" } else { "updated_at" };
+                    let p_lo = self.push_param(lo_ms.into());
+                    let p_hi = self.push_param(hi_ms.into());
+                    let sql = format!(
+                        "SELECT id AS item_id FROM items WHERE {} >= {} AND {} <= {}",
+                        col, p_lo, col, p_hi
+                    );
+                    self.ctes.push(Cte { name: result_name.clone(), sql });
+                    self.explain.push(format!("IMPLICIT DATE RANGE {}:{}..{}", field, lo_ms, hi_ms));
+                    return Ok(result_name);
+                }
+
                 let spec = self.schema.get(&field).ok_or_else(|| MinistoreError::UnknownField(field.clone()))?;
                 if spec.field_type != FieldType::Date {
                     return Err(MinistoreError::TypeMismatch { field: field.clone(), message: format!("expected date field, got {:?}", spec.field_type) });

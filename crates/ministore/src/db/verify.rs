@@ -17,29 +17,32 @@ pub fn require_fts5(conn: &Connection) -> Result<()> {
 }
 
 /// Build CREATE VIRTUAL TABLE search USING fts5(...) statement from schema.
-pub fn build_fts_ddl(schema: &Schema) -> Result<String> {
+pub fn build_fts_ddl(schema: &Schema) -> Result<Option<String>> {
     let text_fields = schema.text_fields_in_order();
     
     if text_fields.is_empty() {
-        return Err(MinistoreError::Schema(
-            "schema must have at least one text field for FTS".into()
-        ));
+        return Ok(None);
     }
     
     let columns: Vec<String> = text_fields.iter().map(|(name, _)| name.clone()).collect();
     let columns_list = columns.join(", ");
     
-    // Standard FTS5 - not using content='' due to corruption issues with delete command
-    Ok(format!(
+    // Note: Not using content='' (contentless FTS) as it breaks DELETE operations
+    Ok(Some(format!(
         "CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5({}, tokenize='unicode61')",
         columns_list
-    ))
+    )))
 }
 
 /// Verify that existing FTS table columns match schema text fields.
 pub fn verify_fts_columns(conn: &Connection, schema: &Schema) -> Result<()> {
     let expected = schema.text_fields_in_order();
     let expected_names: Vec<String> = expected.iter().map(|(name, _)| name.clone()).collect();
+
+    // If schema has no text fields, FTS is not required.
+    if expected_names.is_empty() {
+        return Ok(());
+    }
     
     // Query FTS table columns
     let mut stmt = conn.prepare("PRAGMA table_info(search)")?;
@@ -108,7 +111,7 @@ mod tests {
         schema.add_field("title", FieldSpec::text(Some(3.0)));
         schema.add_field("content", FieldSpec::text(Some(1.0)));
         
-        let ddl = build_fts_ddl(&schema).unwrap();
+        let ddl = build_fts_ddl(&schema).unwrap().unwrap();
         assert!(ddl.contains("CREATE VIRTUAL TABLE"));
         assert!(ddl.contains("content, title")); // BTreeMap sorts alphabetically
         assert!(ddl.contains("fts5"));
@@ -119,7 +122,7 @@ mod tests {
         let mut schema = Schema::new();
         schema.add_field("tags", FieldSpec::keyword(true));
         
-        assert!(build_fts_ddl(&schema).is_err());
+        assert!(build_fts_ddl(&schema).unwrap().is_none());
     }
 
     #[test]
@@ -131,7 +134,7 @@ mod tests {
         schema.add_field("title", FieldSpec::text(Some(3.0)));
         schema.add_field("content", FieldSpec::text(Some(1.0)));
         
-        let ddl = build_fts_ddl(&schema).unwrap();
+        let ddl = build_fts_ddl(&schema).unwrap().unwrap();
         conn.execute(&ddl, []).unwrap();
         
         // Verification should succeed

@@ -47,28 +47,27 @@ pub fn run(args: PutArgs) -> Result<()> {
         // Import mode (stdin or file)
         let reader: Box<dyn Read> = if let Some(path) = &args.import {
             Box::new(File::open(path)?)
-        } else if args.json { // reading from stdin explicitly requested or implied?
-             Box::new(std::io::stdin())
+        } else if args.json {
+            Box::new(std::io::stdin())
         } else {
-             return Err(ministore::MinistoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Must provide --path or --json/--import")));
+            return Err(ministore::MinistoreError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Must provide --path or --json/--import")));
         };
         
-        // Parse JSON
-        let val: Value = serde_json::from_reader(reader).map_err(|e| ministore::MinistoreError::Io(e.into()))?;
-        
-        if let Some(arr) = val.as_array() {
-            // Batch insert
-            let mut batch = Batch::new();
-            for item in arr {
-                batch.put_json(item.clone())?;
+        // Parse JSONL (line-by-line JSON)
+        use std::io::BufRead;
+        let mut batch = Batch::new();
+        let buf_reader = std::io::BufReader::new(reader);
+        for line in buf_reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
             }
-            let count = index.batch(batch)?;
-            println!("Imported {} items", count);
-        } else {
-            // Single doc
-            index.put_json(val)?;
-            println!("Put 1 item");
+            let val: Value = serde_json::from_str(&line)
+                .map_err(|e| ministore::MinistoreError::Schema(format!("JSON parse error: {}", e)))?;
+            batch.put_json(val)?;
         }
+        let count = index.batch(batch)?;
+        println!("Imported {} items", count);
     }
 
     Ok(())

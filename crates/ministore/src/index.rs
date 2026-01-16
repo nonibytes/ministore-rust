@@ -101,15 +101,18 @@ impl Index {
         // Open/create database file
         let conn = rusqlite::Connection::open(&db_path)?;
         
-        // Require FTS5
-        verify::require_fts5(&conn)?;
+        // Require FTS5 only if schema uses text fields
+        if !schema.text_fields_in_order().is_empty() {
+            verify::require_fts5(&conn)?;
+        }
         
         // Create base tables
         ddl::create_base_tables(&conn)?;
         
-        // Create FTS virtual table
-        let fts_ddl = verify::build_fts_ddl(&schema)?;
-        conn.execute(&fts_ddl, [])?;
+        // Create FTS virtual table (optional)
+        if let Some(fts_ddl) = verify::build_fts_ddl(&schema)? {
+            conn.execute(&fts_ddl, [])?;
+        }
         
         // Set pragmas for performance
         conn.execute_batch("
@@ -170,11 +173,11 @@ impl Index {
         let schema = Schema::from_json(&schema_json)?;
         schema.validate()?;
         
-        // Verify FTS5 available
-        verify::require_fts5(&conn)?;
-        
-        // Verify FTS columns match schema
-        verify::verify_fts_columns(&conn, &schema)?;
+        // Verify FTS only if schema has text fields
+        if !schema.text_fields_in_order().is_empty() {
+            verify::require_fts5(&conn)?;
+            verify::verify_fts_columns(&conn, &schema)?;
+        }
         
         // Set pragmas
         conn.execute_batch("
@@ -246,18 +249,16 @@ impl Index {
                     row.get::<_, i64>(3)?,      // updated_at
                 ))
             },
-        )?;
+        ).optional()?;
         
-        let (data_json, created_at, updated_at) = row;
+        let (data_json, created_at_ms, updated_at_ms) = row.ok_or_else(|| MinistoreError::NotFound(path.to_string()))?;
+        
         let doc: Value = serde_json::from_str(&data_json)?;
         
         Ok(ItemView {
             path: path.to_string(),
             doc,
-            meta: ItemMeta {
-                created_at_ms: created_at,
-                updated_at_ms: updated_at,
-            },
+            meta: ItemMeta { created_at_ms, updated_at_ms },
         })
     }
 

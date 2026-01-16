@@ -12,7 +12,64 @@ pub fn compute_stats(
     field: &str,
     scoped_query: Option<&str>,
 ) -> Result<Value> {
-    // Validate field exists
+    // Handle implicit created/updated fields
+    if field == "created" || field == "updated" {
+        let col = if field == "created" { "created_at" } else { "updated_at" };
+        
+        let (count, min, max, avg): (i64, Option<f64>, Option<f64>, Option<f64>) = if let Some(query) = scoped_query {
+            if !query.trim().is_empty() {
+                // Scoped stats: compile to result CTE and aggregate
+                let expr = parse_query(query)?;
+                let normalized = normalize::normalize(expr)?;
+                let compiled = compile_to_ctes(schema, normalized, now_ms())?;
+
+                let ctes_sql: Vec<String> = compiled.ctes.iter()
+                    .map(|c| format!("{} AS ({})", c.name, c.sql))
+                    .collect();
+                let with_clause = if ctes_sql.is_empty() { String::new() } else { format!("WITH {} ", ctes_sql.join(", ")) };
+
+                let sql = format!(
+                    "{with_clause}
+                     SELECT COUNT(*), MIN(i.{col}), MAX(i.{col}), AVG(i.{col})
+                     FROM {result} r
+                     JOIN items i ON i.id = r.item_id",
+                    with_clause = with_clause,
+                    result = compiled.result_cte_name,
+                    col = col
+                );
+
+                conn.query_row(
+                    &sql,
+                    rusqlite::params_from_iter(compiled.params),
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                )?
+            } else {
+                // Empty query = all items
+                conn.query_row(
+                    &format!("SELECT COUNT(*), MIN({col}), MAX({col}), AVG({col}) FROM items", col = col),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                )?
+            }
+        } else {
+            // No query = all items
+            conn.query_row(
+                &format!("SELECT COUNT(*), MIN({col}), MAX({col}), AVG({col}) FROM items", col = col),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            )?
+        };
+
+        return Ok(serde_json::json!({
+            "field": field,
+            "count": count,
+            "min": min,
+            "max": max,
+            "avg": avg
+        }));
+    }
+
+    // Validate field exists in schema
     if !schema.fields.contains_key(field) {
         return Err(crate::MinistoreError::UnknownField(field.to_string()));
     }

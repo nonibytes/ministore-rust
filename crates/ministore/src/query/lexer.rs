@@ -27,6 +27,41 @@ pub fn lex(input: &str) -> Result<Vec<Tok>> {
     let chars: Vec<char> = input.chars().collect();
     let mut i = 0;
 
+    fn is_op_boundary(c: char) -> bool {
+        matches!(c, ':' | '>' | '<' | '!' | '(' | ')' | '&' | '|' )
+    }
+
+    fn looks_like_number(s: &str) -> bool {
+        // strict numeric: -?\d+(\.\d+)?
+        if s.is_empty() { return false; }
+        let mut it = s.chars().peekable();
+        if it.peek() == Some(&'-') { it.next(); }
+        let mut saw_digit = false;
+        while let Some(&c) = it.peek() {
+            if c.is_ascii_digit() {
+                saw_digit = true;
+                it.next();
+            } else {
+                break;
+            }
+        }
+        if !saw_digit { return false; }
+        if it.peek() == Some(&'.') {
+            it.next();
+            let mut saw_frac = false;
+            while let Some(&c) = it.peek() {
+                if c.is_ascii_digit() {
+                    saw_frac = true;
+                    it.next();
+                } else {
+                    break;
+                }
+            }
+            if !saw_frac { return false; }
+        }
+        it.next().is_none()
+    }
+
     while i < chars.len() {
         // Skip whitespace
         if chars[i].is_whitespace() {
@@ -122,54 +157,38 @@ pub fn lex(input: &str) -> Result<Vec<Tok>> {
             continue;
         }
 
-        // Number
-        if chars[i].is_ascii_digit() || (chars[i] == '-' && i + 1 < chars.len() && chars[i + 1].is_ascii_digit()) {
-            let start = i;
-            if chars[i] == '-' {
-                i += 1;
+        // Word token (covers identifiers, paths, dates, wildcard patterns, etc.)
+        // Reads until whitespace or operator boundary, but stops before ".." so ranges tokenize properly.
+        let start = i;
+        while i < chars.len() {
+            if chars[i].is_whitespace() || is_op_boundary(chars[i]) {
+                break;
             }
-            let mut has_dot = false;
-            while i < chars.len() {
-                if chars[i].is_ascii_digit() {
-                    i += 1;
-                } else if chars[i] == '.' && !has_dot {
-                    // Check if this is .. (range operator)
-                    if i + 1 < chars.len() && chars[i + 1] == '.' {
-                        break; // Stop before ..
-                    }
-                    has_dot = true;
-                    i += 1;
-                } else {
-                    break;
-                }
+            if chars[i] == '.' && i + 1 < chars.len() && chars[i + 1] == '.' {
+                break; // stop before range operator
             }
-            let num_str: String = chars[start..i].iter().collect();
-            let num = num_str.parse::<f64>()
-                .map_err(|_| MinistoreError::QueryParse(format!("invalid number: {}", num_str)))?;
+            i += 1;
+        }
+        if start == i {
+            return Err(MinistoreError::QueryParse(format!("unexpected character: {}", chars[i])));
+        }
+        let word: String = chars[start..i].iter().collect();
+
+        // Keywords (case-insensitive)
+        match word.to_uppercase().as_str() {
+            "AND" => { tokens.push(Tok::And); continue; }
+            "OR" => { tokens.push(Tok::Or); continue; }
+            "NOT" => { tokens.push(Tok::Not); continue; }
+            _ => {}
+        }
+
+        if looks_like_number(&word) {
+            let num = word.parse::<f64>()
+                .map_err(|_| MinistoreError::QueryParse(format!("invalid number: {}", word)))?;
             tokens.push(Tok::Number(num));
-            continue;
+        } else {
+            tokens.push(Tok::Ident(word));
         }
-
-        // Identifier or keyword
-        if chars[i].is_alphabetic() || chars[i] == '_' {
-            let start = i;
-            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '*' || chars[i] == '?') {
-                i += 1;
-            }
-            let ident: String = chars[start..i].iter().collect();
-            
-            // Check for keywords (case-insensitive)
-            match ident.to_uppercase().as_str() {
-                "AND" => tokens.push(Tok::And),
-                "OR" => tokens.push(Tok::Or),
-                "NOT" => tokens.push(Tok::Not),
-                _ => tokens.push(Tok::Ident(ident)),
-            }
-            continue;
-        }
-
-        // If we get here, unrecognized character
-        return Err(MinistoreError::QueryParse(format!("unexpected character: {}", chars[i])));
     }
 
     Ok(tokens)

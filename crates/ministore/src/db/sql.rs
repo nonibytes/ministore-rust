@@ -19,7 +19,7 @@ pub const SQL_GET_CURSOR: &str = "SELECT payload, expires_at FROM cursor_store W
 pub const SQL_PUT_CURSOR: &str = "INSERT INTO cursor_store(handle, payload, created_at, expires_at) VALUES(?1,?2,?3,?4)";
 
 pub const SQL_GET_VALUE_IDS_BY_ITEM: &str = "SELECT value_id FROM kw_postings WHERE item_id = ?1";
-pub const SQL_DECREMENT_DOC_FREQ: &str = "UPDATE kw_dict SET doc_freq = doc_freq - 1 WHERE id = ?1";
+pub const SQL_DECREMENT_DOC_FREQ: &str = "UPDATE kw_dict SET doc_freq = CASE WHEN doc_freq > 0 THEN doc_freq - 1 ELSE 0 END WHERE id = ?1";
 pub const SQL_INCREMENT_DOC_FREQ: &str = "UPDATE kw_dict SET doc_freq = doc_freq + 1 WHERE id = ?1";
 
 pub const SQL_INSERT_OR_IGNORE_KW_DICT: &str = 

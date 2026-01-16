@@ -142,6 +142,20 @@ impl Parser {
                 let value = s.clone();
                 self.advance();
 
+                // Support date ranges: field:2024-01-01..2024-06-30
+                // (This will later be validated by planner against schema type.)
+                if self.match_tok(&Tok::DotDot) {
+                    self.advance();
+                    let hi_s = self.expect_string_or_ident()?;
+                    let lo_ms = parse_date_to_epoch_ms(&value)?;
+                    let hi_ms = parse_date_to_epoch_ms(&hi_s)?;
+                    return Ok(Predicate::DateRangeAbs {
+                        field: field.to_string(),
+                        lo_ms,
+                        hi_ms,
+                    });
+                }
+
                 // NOTE: We do NOT decide keyword vs text here.
                 // Planner will look at schema type:
                 // - if field is Text => compile to FTS MATCH
