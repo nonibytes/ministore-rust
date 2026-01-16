@@ -1,7 +1,9 @@
 use rusqlite::Connection;
 use crate::{Result, Schema};
 use serde_json::Value;
-use crate::db::search::{plan_search, SearchOptions};
+use crate::query::{parse_query, normalize};
+use crate::query::planner::compile_to_ctes;
+use crate::db::put::now_ms;
 
 /// Discover top values for a keyword field, optionally scoped by a query.
 pub fn discover_values(
@@ -27,71 +29,44 @@ pub fn discover_values(
 
     if let Some(query) = scoped_query {
         if !query.trim().is_empty() {
-            // Scoped discovery: plan the query to get the item_ids, then join with postings
-            let plan = plan_search(conn, schema, query, &SearchOptions { limit: 100_000, ..Default::default() }, None)?; // large limit for aggregation
-            
-            // Extract the inner SQL (CTE + main select without limit/order) or just use the whole thing as a subquery.
-            // Search query returns: item_id, path, data, created, updated, score.
-            // We only need item_id.
-            
-            // We can wrap the search query:
-            // WITH ... SELECT i.id, ... FROM ...
-            // ->
-            // WITH ... SELECT kp.value_id, COUNT(*) as cnt 
-            // FROM ({search_sql}) s
-            // JOIN kw_postings kp ON kp.item_id = s.item_id
-            // JOIN kw_dict kd ON kd.id = kp.value_id
-            // WHERE kd.field = ?field
-            // GROUP BY kp.value_id
-            // ORDER BY cnt DESC
-            // LIMIT ?top
-            
-            // However, the `plan.sql` usually has a LIMIT at the end. We might want to remove it or set it very high.
-            // We set it to 100_000 above.
-            
-            // We need to inject the field param.
-            let mut params = plan.params.clone();
-            params.push(field.to_string().into()); // ?N+1
-            params.push((top as i64).into()); // ?N+2
-            
-            let field_idx = params.len() - 1; // 1-based index in SQL will be len-1 (0-based) + 1 = len
-            let top_idx = params.len(); 
-            
-            // Modify search SQL to select only item_id
-            // The plan.sql selects "i.id, i.path, ..."
-            // We can alias it as `s` and select `s.item_id` (since column name is `id` or `item_id` in CTE, but main select has `i.id`).
-            // Actually, `run_search` expects cols 0..5.
-            // Let's rely on column 0 being item_id.
-            
+            // Scoped discovery: compile query to result CTE and aggregate against it (no LIMIT artifacts).
+            let expr = parse_query(query)?;
+            let normalized = normalize::normalize(expr)?;
+            let compiled = compile_to_ctes(schema, normalized, now_ms())?;
+
+            let ctes_sql: Vec<String> = compiled.ctes.iter()
+                .map(|c| format!("{} AS ({})", c.name, c.sql))
+                .collect();
+            let with_clause = if ctes_sql.is_empty() { String::new() } else { format!("WITH {} ", ctes_sql.join(", ")) };
+
+            // Append params: compiled params + field + top
+            let mut params = compiled.params;
+            params.push(field.to_string().into());
+            params.push((top as i64).into());
+
             let sql = format!(
-                "WITH subset AS ({search_sql}) \
-                 SELECT kd.value, COUNT(*) as cnt \
-                 FROM subset s \
-                 JOIN kw_postings kp ON kp.item_id = s.item_id \
-                 JOIN kw_dict kd ON kd.id = kp.value_id \
-                 WHERE kd.field = ?{field_idx} \
-                 GROUP BY kd.value \
-                 ORDER BY cnt DESC, kd.value ASC \
-                 LIMIT ?{top_idx}",
-                search_sql = plan.sql,
-                field_idx = field_idx,
-                top_idx = top_idx
+                "{with_clause}
+                 SELECT kd.value, COUNT(DISTINCT kp.item_id) as cnt
+                 FROM {result} r
+                 JOIN kw_postings kp ON kp.item_id = r.item_id
+                 JOIN kw_dict kd ON kd.id = kp.value_id
+                 WHERE kd.field = ? AND kd.value IS NOT NULL
+                 GROUP BY kd.value
+                 ORDER BY cnt DESC, kd.value ASC
+                 LIMIT ?",
+                with_clause = with_clause,
+                result = compiled.result_cte_name
             );
-            
+
             let mut stmt = conn.prepare(&sql)?;
             let rows = stmt.query_map(rusqlite::params_from_iter(params), |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u64))
             })?;
-            
             return rows.collect::<std::result::Result<_, _>>().map_err(Into::into);
         }
     }
     
     // Global discovery (fast path)
-    // Uses doc_freq checks or direct aggregation on postings if doc_freq is not tracked per-value (it is tracked in kw_dict doc_freq col)
-    // Actually kw_dict has `doc_freq` column which is maintained by put/delete.
-    // So we can just query kw_dict!
-    
     let sql = "SELECT value, doc_freq FROM kw_dict WHERE field = ?1 ORDER BY doc_freq DESC, value ASC LIMIT ?2";
     let mut stmt = conn.prepare(sql)?;
     let rows = stmt.query_map(rusqlite::params![field, top], |row| {

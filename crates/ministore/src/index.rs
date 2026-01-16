@@ -411,47 +411,47 @@ impl Index {
 
     /// Count items matching a query.
     pub fn count(&self, query: &str) -> Result<usize> {
-        use crate::db::search::{plan_search, SearchOptions};
+        use crate::query::{parse_query, normalize};
+        use crate::query::planner::compile_to_ctes;
+        use crate::db::put::now_ms;
         
         let conn = self.conn()?;
-        let plan = plan_search(&conn, &self.schema, query, &SearchOptions::default(), None)?;
-        
-        // Replace the SELECT with COUNT(*) 
-        let _count_sql = plan.sql.replace("SELECT i.id, i.path, i.data_json, i.created_at, i.updated_at, CAST(i.updated_at AS REAL) AS score", "SELECT COUNT(DISTINCT i.id)");
-        
-        let sql_no_limit = if let Some(idx) = plan.sql.rfind(" LIMIT ") {
-            &plan.sql[..idx]
-        } else {
-            &plan.sql
-        };
-        
-        let wrapped_sql = format!("SELECT COUNT(*) FROM ({})", sql_no_limit);
-        
-        let count: usize = conn.query_row(&wrapped_sql, rusqlite::params_from_iter(&plan.params), |row| row.get(0))?;
+        let expr = parse_query(query)?;
+        let normalized = normalize::normalize(expr)?;
+        let compiled = compile_to_ctes(&self.schema, normalized, now_ms())?;
+
+        let ctes_sql: Vec<String> = compiled.ctes.iter().map(|c| format!("{} AS ({})", c.name, c.sql)).collect();
+        let with_clause = if ctes_sql.is_empty() { String::new() } else { format!("WITH {} ", ctes_sql.join(", ")) };
+
+        let sql = format!(
+            "{with_clause} SELECT COUNT(*) FROM {result}",
+            with_clause = with_clause,
+            result = compiled.result_cte_name
+        );
+        let count: usize = conn.query_row(&sql, rusqlite::params_from_iter(compiled.params), |row| row.get(0))?;
         
         Ok(count)
     }
 
     /// Delete items matching a query.
     pub fn delete_query(&self, query: &str) -> Result<usize> {
-        use crate::db::search::{plan_search, SearchOptions};
+        use crate::query::{parse_query, normalize};
+        use crate::query::planner::compile_to_ctes;
         use crate::db::delete::delete_by_item_id;
+        use crate::db::put::now_ms;
         
         let conn = self.conn()?;
-        let plan = plan_search(&conn, &self.schema, query, &SearchOptions { limit: 100_000, ..Default::default() }, None)?; 
-        
-        let sql_no_limit = if let Some(idx) = plan.sql.rfind(" LIMIT ") {
-            &plan.sql[..idx]
-        } else {
-            &plan.sql
-        };
+        let expr = parse_query(query)?;
+        let normalized = normalize::normalize(expr)?;
+        let compiled = compile_to_ctes(&self.schema, normalized, now_ms())?;
 
-        // Get IDs
-        let id_sql = format!("SELECT item_id FROM ({})", sql_no_limit);
+        let ctes_sql: Vec<String> = compiled.ctes.iter().map(|c| format!("{} AS ({})", c.name, c.sql)).collect();
+        let with_clause = if ctes_sql.is_empty() { String::new() } else { format!("WITH {} ", ctes_sql.join(", ")) };
+        let id_sql = format!("{with_clause} SELECT item_id FROM {result}", with_clause=with_clause, result=compiled.result_cte_name);
         
         let tx = conn.unchecked_transaction()?;
         let mut stmt = tx.prepare(&id_sql)?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(&plan.params), |row| row.get(0))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(compiled.params), |row| row.get(0))?;
         let item_ids: Vec<i64> = rows.collect::<std::result::Result<_, _>>()?;
         drop(stmt); 
         

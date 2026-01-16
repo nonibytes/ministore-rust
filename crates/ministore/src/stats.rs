@@ -1,7 +1,9 @@
 use rusqlite::Connection;
 use crate::{Result, Schema};
 use serde_json::Value;
-use crate::db::search::{plan_search, SearchOptions};
+use crate::query::{parse_query, normalize};
+use crate::query::planner::compile_to_ctes;
+use crate::db::put::now_ms;
 
 /// Compute statistics for a number or date field.
 pub fn compute_stats(
@@ -30,25 +32,30 @@ pub fn compute_stats(
     
     let (count, min, max, avg): (i64, Option<f64>, Option<f64>, Option<f64>) = if let Some(query) = scoped_query {
         if !query.trim().is_empty() {
-             // Scoped stats: plan search, join field table
-             let plan = plan_search(conn, schema, query, &SearchOptions { limit: 100_000, ..Default::default() }, None)?; // large limit
-             
-             // Wrap search query
-             let mut params = plan.params.clone();
-             params.push(field.to_string().into()); // ?N+1
-             let field_idx = params.len();
-             
+             // Scoped stats: compile to result CTE and aggregate
+             let expr = parse_query(query)?;
+             let normalized = normalize::normalize(expr)?;
+             let compiled = compile_to_ctes(schema, normalized, now_ms())?;
+
+             let ctes_sql: Vec<String> = compiled.ctes.iter()
+                 .map(|c| format!("{} AS ({})", c.name, c.sql))
+                 .collect();
+             let with_clause = if ctes_sql.is_empty() { String::new() } else { format!("WITH {} ", ctes_sql.join(", ")) };
+
+             let mut params = compiled.params;
+             params.push(field.to_string().into());
+
              let sql = format!(
-                "WITH subset AS ({search_sql}) \
-                 SELECT COUNT(*), MIN(fv.value), MAX(fv.value), AVG(fv.value) \
-                 FROM subset s \
-                 JOIN {table} fv ON fv.item_id = s.item_id \
-                 WHERE fv.field = ?{field_idx}",
-                search_sql = plan.sql,
-                table = table,
-                field_idx = field_idx
+                "{with_clause}
+                 SELECT COUNT(DISTINCT fv.item_id), MIN(fv.value), MAX(fv.value), AVG(fv.value)
+                 FROM {result} r
+                 JOIN {table} fv ON fv.item_id = r.item_id
+                 WHERE fv.field = ?",
+                with_clause = with_clause,
+                result = compiled.result_cte_name,
+                table = table
              );
-             
+
              conn.query_row(
                 &sql,
                 rusqlite::params_from_iter(params),
