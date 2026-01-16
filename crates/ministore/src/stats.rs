@@ -31,7 +31,7 @@ pub fn compute_stats(
     let (count, min, max, avg): (i64, Option<f64>, Option<f64>, Option<f64>) = if let Some(query) = scoped_query {
         if !query.trim().is_empty() {
              // Scoped stats: plan search, join field table
-             let plan = plan_search(conn, schema, query, &SearchOptions { limit: 100_000, ..Default::default() })?; // large limit
+             let plan = plan_search(conn, schema, query, &SearchOptions { limit: 100_000, ..Default::default() }, None)?; // large limit
              
              // Wrap search query
              let mut params = plan.params.clone();

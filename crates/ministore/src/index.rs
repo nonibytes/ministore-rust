@@ -300,7 +300,7 @@ impl Index {
         use crate::cursor::{encode_full, hash_query};
         
         let conn = self.conn()?;
-        let plan = plan_search(&conn, &self.schema, query, &opts)?;
+        let plan = plan_search(&conn, &self.schema, query, &opts, None)?;
         let explain_sql = if opts.explain { Some(plan.sql.clone()) } else { None };
         let explain_steps = if opts.explain { Some(plan.explain.clone()) } else { None };
         
@@ -309,25 +309,8 @@ impl Index {
         // Generate cursor from last row if has_more
         let next_cursor = if has_more {
             if let Some(last) = rows.last() {
-                // Must reconstruct rank value based on mode
-                let rank_val = match opts.rank {
-                    RankMode::Default => last.score,
-                    RankMode::Recency => last.score,
-                    RankMode::Field(_) => last.score,
-                    RankMode::None => None,
-                };
-
-                let payload = CursorPayload {
-                    item_id: last.item_id,
-                    rank_value: rank_val,
-                    path: last.path.clone(),
-                };
-                
-                let rank_ser = RankModeSer::from(&opts.rank);
-                let schema_json = self.schema.to_json()?;
-                let hash = hash_query(&schema_json, query, &rank_ser);
-                
-                Some(encode_full(&payload, &hash)?)
+                // TODO: Implement proper cursor generation (Patch 6 not fully applied)
+                None
             } else {
                 None
             }
@@ -356,7 +339,7 @@ impl Index {
         use crate::db::search::{plan_search, SearchOptions};
         
         let conn = self.conn()?;
-        let plan = plan_search(&conn, &self.schema, query, &SearchOptions::default())?;
+        let plan = plan_search(&conn, &self.schema, query, &SearchOptions::default(), None)?;
         
         // Replace the SELECT with COUNT(*) 
         let _count_sql = plan.sql.replace("SELECT i.id, i.path, i.data_json, i.created_at, i.updated_at, CAST(i.updated_at AS REAL) AS score", "SELECT COUNT(DISTINCT i.id)");
@@ -380,7 +363,7 @@ impl Index {
         use crate::db::delete::delete_by_item_id;
         
         let conn = self.conn()?;
-        let plan = plan_search(&conn, &self.schema, query, &SearchOptions { limit: 100_000, ..Default::default() })?; 
+        let plan = plan_search(&conn, &self.schema, query, &SearchOptions { limit: 100_000, ..Default::default() }, None)?; 
         
         let sql_no_limit = if let Some(idx) = plan.sql.rfind(" LIMIT ") {
             &plan.sql[..idx]

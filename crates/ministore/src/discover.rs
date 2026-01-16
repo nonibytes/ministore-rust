@@ -28,7 +28,7 @@ pub fn discover_values(
     if let Some(query) = scoped_query {
         if !query.trim().is_empty() {
             // Scoped discovery: plan the query to get the item_ids, then join with postings
-            let plan = plan_search(conn, schema, query, &SearchOptions { limit: 100_000, ..Default::default() })?; // large limit for aggregation
+            let plan = plan_search(conn, schema, query, &SearchOptions { limit: 100_000, ..Default::default() }, None)?; // large limit for aggregation
             
             // Extract the inner SQL (CTE + main select without limit/order) or just use the whole thing as a subquery.
             // Search query returns: item_id, path, data, created, updated, score.

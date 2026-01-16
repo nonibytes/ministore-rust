@@ -2,12 +2,19 @@ use crate::index::RankMode;
 use serde::{Deserialize, Serialize};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Sha256, Digest};
+use rand::{RngCore, rngs::OsRng};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct CursorPayload {
-    pub item_id: i64,
-    pub rank_value: Option<f64>,
-    pub path: String,
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum CursorPayload {
+    // ORDER BY score DESC, item_id ASC
+    Fts { score: f64, item_id: i64 },
+    // ORDER BY updated_at DESC, path ASC
+    Recency { updated_at_ms: i64, path: String },
+    // ORDER BY rank_value DESC, updated_at DESC, path ASC
+    Field { field: String, rank_value: f64, updated_at_ms: i64, path: String },
+    // ORDER BY item_id ASC
+    None { item_id: i64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,21 +82,19 @@ pub fn decode_full(token: &str) -> crate::Result<CursorPosition> {
     Ok(pos)
 }
 
-/// Encode cursor as short format (just search row position).
-pub fn encode_short(item_id: i64) -> String {
-    format!("s{}", item_id)
+pub fn is_short_cursor_token(token: &str) -> bool {
+    token.starts_with("c:")
 }
 
-/// Decode short cursor.
-pub fn decode_short(token: &str) -> crate::Result<i64> {
-    if !token.starts_with('s') {
-        return Err(crate::MinistoreError::Cursor(
-            "short cursor must start with 's'".into()
-        ));
-    }
-    
-    token[1..].parse::<i64>()
-        .map_err(|e| crate::MinistoreError::Cursor(format!("invalid item_id: {}", e)))
+pub fn short_cursor_handle(token: &str) -> Option<&str> {
+    token.strip_prefix("c:")
+}
+
+pub fn make_short_handle() -> String {
+    // base62-ish: we'll hex-encode 6 random bytes for simplicity and stability
+    let mut b = [0u8; 6];
+    OsRng.fill_bytes(&mut b);
+    format!("{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3], b[4], b[5])
 }
 
 #[cfg(test)]
@@ -108,11 +113,7 @@ mod tests {
 
     #[test]
     fn test_encode_decode_full() {
-        let payload = CursorPayload {
-            item_id: 123,
-            rank_value: Some(0.95),
-            path: "/test/path".to_string(),
-        };
+        let payload = CursorPayload::Recency { updated_at_ms: 123, path: "/p".into() };
         
         let hash = "abc123";
         let encoded = encode_full(&payload, hash).unwrap();
@@ -123,19 +124,8 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_decode_short() {
-        let item_id = 456;
-        let encoded = encode_short(item_id);
-        let decoded = decode_short(&encoded).unwrap();
-        
-        assert_eq!(decoded, item_id);
-        assert!(encoded.starts_with('s'));
-    }
-
-    #[test]
-    fn test_decode_short_invalid() {
-        assert!(decode_short("x123").is_err());
-        assert!(decode_short("s").is_err());
-        assert!(decode_short("sabc").is_err());
+    fn test_short_handle() {
+        let h = make_short_handle();
+        assert!(!h.is_empty());
     }
 }

@@ -3,7 +3,7 @@ use crate::{Result, Schema, ItemView, item::ItemMeta};
 use crate::query::{parse_query, normalize};
 use crate::query::planner::{compile_to_ctes, build_search_sql};
 use crate::index::{RankMode, OutputFieldSelector, CursorMode};
-use crate::cursor::{RankModeSer, hash_query, decode_full};
+use crate::cursor::{CursorPosition, CursorPayload};
 use crate::db::put::now_ms;
 use serde_json::Value;
 
@@ -35,6 +35,7 @@ pub struct PlannedQuery {
     pub sql: String,
     pub params: Vec<rusqlite::types::Value>,
     pub explain: Vec<String>,
+    pub requires_fts_rank: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +54,7 @@ pub fn plan_search(
     schema: &Schema,
     query: &str,
     opts: &SearchOptions,
+    after: Option<&CursorPosition>,
 ) -> Result<PlannedQuery> {
     // Parse and normalize
     let expr = parse_query(query)?;
@@ -63,56 +65,72 @@ pub fn plan_search(
     
     // Build SQL
     let limit_plus_one = opts.limit + 1; // For has_more detection
-    
-    let schema_json = schema.to_json()?;
-    let rank_ser = RankModeSer::from(&opts.rank);
-    let expected_hash = hash_query(&schema_json, query, &rank_ser);
 
-    let after_filter = if let Some(tok) = &opts.after {
-        let pos = decode_full(tok)?;
-        if pos.hash != expected_hash {
-            return Err(crate::MinistoreError::Cursor("cursor does not match query/schema/rank".into()));
-        }
-        // We use CursorPayload.rank_value as:
-        // - FTS: score
-        // - Recency/default-non-fts: updated_at as f64
-        // - None: None
-        // Filters must match the ORDER BY in planner:
-        match opts.rank {
-            RankMode::None => {
-                // ORDER BY i.id ASC
-                // after: item_id > last_id
-                // Note: uses i.id in WHERE
-                Some(format!("i.id > {}", pos.payload.item_id))
+    // Build after-filter with bound params (avoid SQL injection and match ordering rules).
+    // We produce a SQL fragment that references "score", "i.updated_at", "i.path", "i.id".
+    let mut after_filter_sql: Option<String> = None;
+    let mut after_params: Vec<rusqlite::types::Value> = Vec::new();
+    if let Some(pos) = after {
+        match (&opts.rank, &pos.payload) {
+            (RankMode::None, CursorPayload::None { item_id }) => {
+                after_filter_sql = Some("i.id > ?".to_string());
+                after_params.push((*item_id).into());
             }
-            RankMode::Recency | RankMode::Default | RankMode::Field(_) => {
-                // ORDER BY i.updated_at DESC, i.path ASC (for non-FTS default and recency, and current Field fallback)
-                let u = pos.payload.rank_value.ok_or_else(|| crate::MinistoreError::Cursor("cursor missing rank_value".into()))?;
-                let updated_at = u as i64;
-                // Escape single quotes in path for SQL literal safety
-                let path = pos.payload.path.replace('\'', "''");
-                Some(format!(
-                    "(i.updated_at < {} OR (i.updated_at = {} AND i.path > '{}'))",
-                    updated_at, updated_at, path
-                ))
+            // Default w/ FTS: ORDER BY score DESC, i.id ASC
+            (RankMode::Default, CursorPayload::Fts { score, item_id }) => {
+                after_filter_sql = Some("(score < ? OR (score = ? AND i.id > ?))".to_string());
+                after_params.push((*score).into());
+                after_params.push((*score).into());
+                after_params.push((*item_id).into());
+            }
+            // Recency ordering and Default (non-FTS fallback): ORDER BY updated_at DESC, path ASC
+            (RankMode::Recency, CursorPayload::Recency { updated_at_ms, path })
+            | (RankMode::Default, CursorPayload::Recency { updated_at_ms, path }) => {
+                after_filter_sql = Some("(i.updated_at < ? OR (i.updated_at = ? AND i.path > ?))".to_string());
+                after_params.push((*updated_at_ms).into());
+                after_params.push((*updated_at_ms).into());
+                after_params.push(path.clone().into());
+            }
+            // Field ordering: ORDER BY score DESC, updated_at DESC, path ASC (score is rank_value)
+            (RankMode::Field(_), CursorPayload::Field { rank_value, updated_at_ms, path, .. }) => {
+                after_filter_sql = Some(
+                    "(score < ? OR (score = ? AND (i.updated_at < ? OR (i.updated_at = ? AND i.path > ?))))"
+                        .to_string()
+                );
+                after_params.push((*rank_value).into());
+                after_params.push((*rank_value).into());
+                after_params.push((*updated_at_ms).into());
+                after_params.push((*updated_at_ms).into());
+                after_params.push(path.clone().into());
+            }
+            _ => {
+                return Err(crate::MinistoreError::Cursor("cursor payload does not match rank mode".into()));
             }
         }
-    } else {
-        None
-    };
+    }
     
-    let (sql, params) = build_search_sql(
+    let (mut sql, mut params) = build_search_sql(
         schema,
         compiled.clone(),
         &opts.rank,
         limit_plus_one,
-        after_filter,
+        after_filter_sql,
     )?;
+
+    // Append field ranking param (planner expects it as last param).
+    if let RankMode::Field(field_name) = &opts.rank {
+        params.push(field_name.clone().into());
+    }
+    // Append after-filter params after everything else (they use anonymous '?' placeholders).
+    // build_search_sql currently inserts after_filter as "AND (<fragment>)" where fragment contains '?'
+    // so these must be in order after compiled params (+rank field param).
+    params.extend(after_params);
     
     Ok(PlannedQuery {
         sql,
         params,
         explain: compiled.explain_steps,
+        requires_fts_rank: matches!(opts.rank, RankMode::Default) && compiled.requires_fts_join,
     })
 }
 
@@ -181,7 +199,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         
         // Use FTS text query which is a positive anchor
-        let plan = plan_search(&conn, &schema, "title:test", &opts).unwrap();
+        let plan = plan_search(&conn, &schema, "title:test", &opts, None).unwrap();
         
         assert!(!plan.sql.is_empty());
         assert!(!plan.explain.is_empty());

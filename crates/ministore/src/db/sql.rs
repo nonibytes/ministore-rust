@@ -15,7 +15,7 @@ pub const SQL_DELETE_BOOL_BY_ITEM: &str = "DELETE FROM field_bool WHERE item_id 
 pub const SQL_DELETE_ITEMS_BY_ID: &str = "DELETE FROM items WHERE id = ?1";
 
 pub const SQL_CLEANUP_EXPIRED_CURSORS: &str = "DELETE FROM cursor_store WHERE expires_at < ?1";
-pub const SQL_GET_CURSOR: &str = "SELECT payload FROM cursor_store WHERE handle = ?1";
+pub const SQL_GET_CURSOR: &str = "SELECT payload, expires_at FROM cursor_store WHERE handle = ?1";
 pub const SQL_PUT_CURSOR: &str = "INSERT INTO cursor_store(handle, payload, created_at, expires_at) VALUES(?1,?2,?3,?4)";
 
 pub const SQL_GET_VALUE_IDS_BY_ITEM: &str = "SELECT value_id FROM kw_postings WHERE item_id = ?1";
