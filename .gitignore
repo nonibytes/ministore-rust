@@ -3,3 +3,6 @@ target/
 **/*.db-shm
 **/*.db-wal
 .DS_Store
+all.txt
+ALL.txt
+PATCH.md

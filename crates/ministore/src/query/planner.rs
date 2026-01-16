@@ -64,6 +64,11 @@ impl<'a> Compiler<'a> {
         name
     }
 
+    fn push_param(&mut self, v: rusqlite::types::Value) -> String {
+        self.params.push(v);
+        format!("?{}", self.params.len())
+    }
+
     fn compile_expr(&mut self, expr: Expr) -> Result<String> {
         match expr {
             Expr::And(left, right) => {
@@ -131,8 +136,8 @@ impl<'a> Compiler<'a> {
                     return Err(MinistoreError::UnknownField(field));
                 }
                 let result_name = self.next_cte_name();
-                let sql = "SELECT item_id FROM field_present WHERE field = ?1".to_string();
-                self.params.push(field.clone().into());
+                let p_field = self.push_param(field.clone().into());
+                let sql = format!("SELECT item_id FROM field_present WHERE field = {}", p_field);
                 self.ctes.push(Cte {
                     name: result_name.clone(),
                     sql,
@@ -147,11 +152,11 @@ impl<'a> Compiler<'a> {
                 // Otherwise: use GLOB
                 let sql = if pattern.ends_with('*') && !pattern[..pattern.len()-1].contains('*') && !pattern.contains('?') {
                     let prefix = pattern.trim_end_matches('*').to_string();
-                    self.params.push(format!("{}%", prefix).into());
-                    "SELECT id AS item_id FROM items WHERE path LIKE ?1".to_string()
+                    let p = self.push_param(format!("{}%", prefix).into());
+                    format!("SELECT id AS item_id FROM items WHERE path LIKE {}", p)
                 } else {
-                    self.params.push(pattern.clone().into());
-                    "SELECT id AS item_id FROM items WHERE path GLOB ?1".to_string()
+                    let p = self.push_param(pattern.clone().into());
+                    format!("SELECT id AS item_id FROM items WHERE path GLOB {}", p)
                 };
                 self.ctes.push(Cte {
                     name: result_name.clone(),
@@ -187,38 +192,38 @@ impl<'a> Compiler<'a> {
                 //   ?2 = pattern value / like / glob
                 let sql = match kind {
                     KeywordPatternKind::Exact => {
-                        self.params.push(field.clone().into());
-                        self.params.push(pattern.clone().into());
-                        "SELECT p.item_id \
+                        let p_field = self.push_param(field.clone().into());
+                        let p_val = self.push_param(pattern.clone().into());
+                        format!("SELECT p.item_id \
                          FROM kw_dict d \
                          JOIN kw_postings p ON p.value_id = d.id \
-                         WHERE d.field = ?1 AND d.value = ?2".to_string()
+                         WHERE d.field = {} AND d.value = {}", p_field, p_val)
                     }
                     KeywordPatternKind::Prefix => {
                         let prefix = pattern.trim_end_matches('*').to_string();
-                        self.params.push(field.clone().into());
-                        self.params.push(format!("{}%", prefix).into());
-                        "SELECT p.item_id \
+                        let p_field = self.push_param(field.clone().into());
+                        let p_val = self.push_param(format!("{}%", prefix).into());
+                        format!("SELECT p.item_id \
                          FROM kw_dict d \
                          JOIN kw_postings p ON p.value_id = d.id \
-                         WHERE d.field = ?1 AND d.value LIKE ?2".to_string()
+                         WHERE d.field = {} AND d.value LIKE {}", p_field, p_val)
                     }
                     KeywordPatternKind::Contains => {
                         let inner = pattern.trim_matches('*').to_string();
-                        self.params.push(field.clone().into());
-                        self.params.push(format!("%{}%", inner).into());
-                        "SELECT p.item_id \
+                        let p_field = self.push_param(field.clone().into());
+                        let p_val = self.push_param(format!("%{}%", inner).into());
+                        format!("SELECT p.item_id \
                          FROM kw_dict d \
                          JOIN kw_postings p ON p.value_id = d.id \
-                         WHERE d.field = ?1 AND d.value LIKE ?2".to_string()
+                         WHERE d.field = {} AND d.value LIKE {}", p_field, p_val)
                     }
                     KeywordPatternKind::Glob => {
-                        self.params.push(field.clone().into());
-                        self.params.push(pattern.clone().into());
-                        "SELECT p.item_id \
+                        let p_field = self.push_param(field.clone().into());
+                        let p_val = self.push_param(pattern.clone().into());
+                        format!("SELECT p.item_id \
                          FROM kw_dict d \
                          JOIN kw_postings p ON p.value_id = d.id \
-                         WHERE d.field = ?1 AND d.value GLOB ?2".to_string()
+                         WHERE d.field = {} AND d.value GLOB {}", p_field, p_val)
                     }
                 };
                 
@@ -257,8 +262,8 @@ impl<'a> Compiler<'a> {
                     let parts: Vec<String> = cols.into_iter().map(|(c, _)| format!("{}:{}", c, fts)).collect();
                     format!("({})", parts.join(" OR "))
                 };
-                self.params.push(match_str.into());
-                let sql = "SELECT rowid AS item_id FROM search WHERE search MATCH ?1".to_string();
+                let p_match = self.push_param(match_str.into());
+                let sql = format!("SELECT rowid AS item_id FROM search WHERE search MATCH {}", p_match);
                 
                 self.ctes.push(Cte {
                     name: result_name.clone(),
@@ -281,9 +286,9 @@ impl<'a> Compiler<'a> {
                     CmpOp::Lt => "<",
                     CmpOp::Lte => "<=",
                 };
-                self.params.push(field.clone().into());
-                self.params.push(value.into());
-                let sql = format!("SELECT item_id FROM field_number WHERE field = ?1 AND value {} ?2", op_str);
+                let p_field = self.push_param(field.clone().into());
+                let p_val = self.push_param(value.into());
+                let sql = format!("SELECT item_id FROM field_number WHERE field = {} AND value {} {}", p_field, op_str, p_val);
                 
                 self.ctes.push(Cte {
                     name: result_name.clone(),
@@ -299,10 +304,10 @@ impl<'a> Compiler<'a> {
                     return Err(MinistoreError::TypeMismatch { field: field.clone(), message: format!("expected number field, got {:?}", spec.field_type) });
                 }
                 let result_name = self.next_cte_name();
-                self.params.push(field.clone().into());
-                self.params.push(lo.into());
-                self.params.push(hi.into());
-                let sql = "SELECT item_id FROM field_number WHERE field = ?1 AND value >= ?2 AND value <= ?3".to_string();
+                let p_field = self.push_param(field.clone().into());
+                let p_lo = self.push_param(lo.into());
+                let p_hi = self.push_param(hi.into());
+                let sql = format!("SELECT item_id FROM field_number WHERE field = {} AND value >= {} AND value <= {}", p_field, p_lo, p_hi);
                 
                 self.ctes.push(Cte {
                     name: result_name.clone(),
@@ -324,8 +329,8 @@ impl<'a> Compiler<'a> {
                         CmpOp::Lt => "<",
                         CmpOp::Lte => "<=",
                     };
-                    self.params.push(epoch_ms.into());
-                    let sql = format!("SELECT id AS item_id FROM items WHERE {} {} ?1", col, op_str);
+                    let p = self.push_param(epoch_ms.into());
+                    let sql = format!("SELECT id AS item_id FROM items WHERE {} {} {}", col, op_str, p);
                     self.ctes.push(Cte { name: result_name.clone(), sql });
                     self.explain.push(format!("DATE {}{}{}", field, op_str, epoch_ms));
                     return Ok(result_name);
@@ -342,9 +347,9 @@ impl<'a> Compiler<'a> {
                     CmpOp::Lt => "<",
                     CmpOp::Lte => "<=",
                 };
-                self.params.push(field.clone().into());
-                self.params.push(epoch_ms.into());
-                let sql = format!("SELECT item_id FROM field_date WHERE field = ?1 AND value {} ?2", op_str);
+                let p_field = self.push_param(field.clone().into());
+                let p_val = self.push_param(epoch_ms.into());
+                let sql = format!("SELECT item_id FROM field_date WHERE field = {} AND value {} {}", p_field, op_str, p_val);
                 
                 self.ctes.push(Cte {
                     name: result_name.clone(),
@@ -360,10 +365,10 @@ impl<'a> Compiler<'a> {
                     return Err(MinistoreError::TypeMismatch { field: field.clone(), message: format!("expected date field, got {:?}", spec.field_type) });
                 }
                 let result_name = self.next_cte_name();
-                self.params.push(field.clone().into());
-                self.params.push(lo_ms.into());
-                self.params.push(hi_ms.into());
-                let sql = "SELECT item_id FROM field_date WHERE field = ?1 AND value >= ?2 AND value <= ?3".to_string();
+                let p_field = self.push_param(field.clone().into());
+                let p_lo = self.push_param(lo_ms.into());
+                let p_hi = self.push_param(hi_ms.into());
+                let sql = format!("SELECT item_id FROM field_date WHERE field = {} AND value >= {} AND value <= {}", p_field, p_lo, p_hi);
 
                 self.ctes.push(Cte {
                     name: result_name.clone(),
@@ -417,8 +422,8 @@ impl<'a> Compiler<'a> {
                         CmpOp::Lt => "<",
                         CmpOp::Lte => "<=",
                     };
-                    self.params.push(target_ms.into());
-                    let sql = format!("SELECT id AS item_id FROM items WHERE {} {} ?1", col, op_str);
+                    let p = self.push_param(target_ms.into());
+                    let sql = format!("SELECT id AS item_id FROM items WHERE {} {} {}", col, op_str, p);
                     
                     self.ctes.push(Cte {
                         name: result_name.clone(),
@@ -440,9 +445,9 @@ impl<'a> Compiler<'a> {
                         CmpOp::Lt => "<",
                         CmpOp::Lte => "<=",
                     };
-                    self.params.push(field.clone().into());
-                    self.params.push(target_ms.into());
-                    let sql = format!("SELECT item_id FROM field_date WHERE field = ?1 AND value {} ?2", op_str);
+                    let p_field = self.push_param(field.clone().into());
+                    let p_val = self.push_param(target_ms.into());
+                    let sql = format!("SELECT item_id FROM field_date WHERE field = {} AND value {} {}", p_field, op_str, p_val);
                     
                     self.ctes.push(Cte {
                         name: result_name.clone(),
@@ -460,9 +465,9 @@ impl<'a> Compiler<'a> {
                 }
                 let result_name = self.next_cte_name();
                 let int_val = if value { 1 } else { 0 };
-                self.params.push(field.clone().into());
-                self.params.push((int_val as i64).into());
-                let sql = "SELECT item_id FROM field_bool WHERE field = ?1 AND value = ?2".to_string();
+                let p_field = self.push_param(field.clone().into());
+                let p_val = self.push_param((int_val as i64).into());
+                let sql = format!("SELECT item_id FROM field_bool WHERE field = {} AND value = {}", p_field, p_val);
                 
                 self.ctes.push(Cte {
                     name: result_name.clone(),
@@ -489,6 +494,34 @@ pub fn build_search_sql(
     for cte in &compiled.ctes {
         sql_parts.push(format!("{} AS ({})", cte.name, cte.sql));
     }
+
+    // Optional CTE for field ranking
+    let mut field_rank_cte_name: Option<String> = None;
+    if let RankMode::Field(field_name) = rank {
+        let spec = schema.get(field_name).ok_or_else(|| MinistoreError::UnknownField(field_name.clone()))?;
+        let (table, value_col) = match spec.field_type {
+            FieldType::Number => ("field_number", "value"),
+            FieldType::Date => ("field_date", "value"),
+            _ => {
+                return Err(MinistoreError::TypeMismatch {
+                    field: field_name.clone(),
+                    message: "rank field must be number or date".into(),
+                });
+            }
+        };
+        // Append param for the field name (must be appended AFTER compiled.params).
+        // We'll do it at the end, outside of this function, by returning SQL that uses ?{n}.
+        // So here we inject a placeholder that assumes it's the next parameter index.
+        // We compute it based on compiled.params.len() + 1.
+        let p_field = format!("?{}", compiled.params.len() + 1);
+        let cte_name = "rank_field".to_string();
+        let cte_sql = format!(
+            "SELECT item_id, MAX({}) AS rank_value FROM {} WHERE field = {} GROUP BY item_id",
+            value_col, table, p_field
+        );
+        sql_parts.push(format!("{} AS ({})", cte_name, cte_sql));
+        field_rank_cte_name = Some(cte_name);
+    }
     
     let with_clause = if sql_parts.is_empty() {
         String::new()
@@ -497,10 +530,10 @@ pub fn build_search_sql(
     };
     
     // Build main SELECT with proper ranking
-    let select_cols = "i.id, i.path, i.data_json, i.created_at, i.updated_at";
+    let select_cols = "i.id AS item_id, i.path, i.data_json, i.created_at, i.updated_at";
     
     // Always return a 6th column called "score" (REAL or NULL).
-    let (order_clause, score_expr, fts_join) = if matches!(rank, RankMode::Default) && compiled.requires_fts_join {
+    let (order_clause, score_expr, fts_join, extra_join) = if matches!(rank, RankMode::Default) && compiled.requires_fts_join {
         // Weighted BM25: score = -bm25(search, w1, w2, ...  )
         // FTS5's bm25() is "smaller is better", so negate it
         let text_fields = schema.text_fields_in_order();
@@ -513,7 +546,8 @@ pub fn build_search_sql(
         (
             String::from("ORDER BY score DESC, i.id ASC"),
             score_col,
-            String::from("JOIN search ON search.rowid = i.id")
+            String::from("JOIN search ON search.rowid = i.id"),
+            String::new()
         )
     } else {
         // Other ranking modes
@@ -521,21 +555,22 @@ pub fn build_search_sql(
             RankMode::Recency => (
                 String::from("ORDER BY i.updated_at DESC, i.path ASC"),
                 String::from("CAST(i.updated_at AS REAL)"),
+                String::new(),
                 String::new()
             ),
             RankMode::Field(_field_name) => {
-                // Field-based ranking - simplified for now
-                // Field ranking is handled in outer layer (db/search) by joining field_number/field_date
-                // Here we fall back to recency ordering and a NULL score.
+                let rf = field_rank_cte_name.as_ref().expect("rank_field cte");
                 (
-                    String::from("ORDER BY i.updated_at DESC, i.path ASC"),
-                    String::from("CAST(i.updated_at AS REAL)"),
-                    String::new()
+                    String::from("ORDER BY score DESC, i.updated_at DESC, i.path ASC"),
+                    format!("CAST({}.rank_value AS REAL)", rf),
+                    String::new(),
+                    format!("JOIN {} ON {}.item_id = i.id", rf, rf)
                 )
             },
             RankMode::None => (
                 String::from("ORDER BY i.id ASC"),
                 String::from("NULL"),
+                String::new(),
                 String::new()
             ),
             RankMode::Default => {
@@ -543,6 +578,7 @@ pub fn build_search_sql(
                 (
                     String::from("ORDER BY i.updated_at DESC, i.path ASC"),
                     String::from("CAST(i.updated_at AS REAL)"),
+                    String::new(),
                     String::new()
                 )
             }
@@ -552,19 +588,21 @@ pub fn build_search_sql(
     let after_clause = after_filter.as_ref().map(|f| format!("AND ({})", f)).unwrap_or_default();
     
     let sql = format!(
-        "{}SELECT {}, {} AS score FROM items i {} \
+        "{}SELECT {}, {} AS score FROM items i {} {} \
          JOIN {} r ON r.item_id = i.id \
          WHERE 1=1 {} {} LIMIT {}",
         with_clause,
         select_cols,
         score_expr,
         fts_join,
+        extra_join,
         compiled.result_cte_name,
         after_clause,
         order_clause,
         limit_plus_one
     );
     
+    // If RankMode::Field, caller MUST append the extra field-name param to compiled.params.
     Ok((sql, compiled.params))
 }
 

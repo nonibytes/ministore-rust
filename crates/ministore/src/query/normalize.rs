@@ -36,7 +36,6 @@ pub fn has_positive_anchor(expr: &Expr) -> bool {
 fn is_positive_anchor(pred: &Predicate) -> bool {
     match pred {
         Predicate::Text { .. } => true, // FTS queries are positive anchors
-        Predicate::Has { .. } => true,  // Existence check is a valid anchor (uses index)
         Predicate::Keyword { kind, .. } => {
             matches!(kind, KeywordPatternKind::Exact) // Only exact matches are positive
         }

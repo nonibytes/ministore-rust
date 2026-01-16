@@ -249,19 +249,42 @@ fn parse_date_to_epoch_ms(s: &str) -> Result<i64> {
     })
 }
 
+/// Execute prepared put operation, preserving provided timestamps.
+/// Used for migrations/rebuilds.
+pub fn execute_put_with_timestamps(
+    tx: &Transaction,
+    schema: &Schema,
+    prep: PutPrepared,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+) -> Result<()> {
+    // Upsert items row with timestamps, then same indexing steps as execute_put.
+    let (item_id, _created) = upsert_item_row_with_timestamps(tx, &prep.path, &prep.data_json, created_at_ms, updated_at_ms)?;
+    execute_put_internal(tx, schema, prep, item_id, created_at_ms, updated_at_ms)
+}
+
 /// Execute prepared put operation.
 pub fn execute_put(tx: &Transaction, schema: &Schema, prep: PutPrepared, now_ms: i64) -> Result<()> {
+    let (item_id, created_at_ms) = upsert_item_row(tx, &prep.path, &prep.data_json, now_ms)?;
+    execute_put_internal(tx, schema, prep, item_id, created_at_ms, now_ms)
+}
+
+fn execute_put_internal(
+    tx: &Transaction,
+    schema: &Schema,
+    prep: PutPrepared,
+    item_id: i64,
+    _created_at_ms: i64,
+    _updated_at_ms: i64,
+) -> Result<()> {
     use super::sql::*;
-    
-    // Upsert items row
-    let (item_id, _created_at) = upsert_item_row(tx, &prep.path, &prep.data_json, now_ms)?;
-    
-    // Delete old field entries and track old keyword value_ids for doc_freq adjustment
+
+    // Track old keyword value_ids BEFORE deleting postings.
     let old_value_ids: HashSet<i64> = tx
         .prepare(SQL_GET_VALUE_IDS_BY_ITEM)?
         .query_map([item_id], |row| row.get(0))?
         .collect::<std::result::Result<_, _>>()?;
-    
+
     // Delete old entries
     tx.execute(SQL_DELETE_POSTINGS_BY_ITEM, [item_id])?;
     tx.execute(SQL_DELETE_NUMBER_BY_ITEM, [item_id])?;
@@ -269,67 +292,65 @@ pub fn execute_put(tx: &Transaction, schema: &Schema, prep: PutPrepared, now_ms:
     tx.execute(SQL_DELETE_BOOL_BY_ITEM, [item_id])?;
     tx.execute(SQL_DELETE_PRESENT_BY_ITEM, [item_id])?;
     tx.execute(SQL_DELETE_SEARCH_ROW, [item_id])?;
-    
+
     // Insert field_present
     for field in &prep.present_fields {
         tx.execute(SQL_INSERT_FIELD_PRESENT, rusqlite::params![item_id, field])?;
     }
-    
+
     // Insert keywords with dictionary+postings
     let mut new_value_ids = HashSet::new();
     for (field, values) in &prep.keyword_fields {
         for value in values {
-            // Insert or ignore into dictionary
             tx.execute(SQL_INSERT_OR_IGNORE_KW_DICT, rusqlite::params![field, value])?;
-            
-            // Get dictionary id
             let value_id: i64 = tx.query_row(
                 SQL_GET_KW_DICT_ID,
                 rusqlite::params![field, value],
                 |row| row.get(0),
             )?;
-            
-            // Insert posting
-            let rows_affected = tx.execute(
+
+            // Insert posting (we deleted old postings already, so this will usually insert)
+            tx.execute(
                 SQL_INSERT_OR_IGNORE_KW_POSTING,
                 rusqlite::params![field, value_id, item_id],
             )?;
-            
-            // If posting was newly inserted, increment doc_freq
-            if rows_affected > 0 {
+
+            // Correct doc_freq semantics:
+            // increment only if this value was NOT previously associated with this item.
+            if !old_value_ids.contains(&value_id) {
                 tx.execute(SQL_INCREMENT_DOC_FREQ, [value_id])?;
             }
-            
+
             new_value_ids.insert(value_id);
         }
     }
-    
-    // Decrement doc_freq for value_ids that are no longer present
+
+    // Decrement doc_freq for values no longer present
     for value_id in old_value_ids.difference(&new_value_ids) {
-        tx.execute(SQL_DECREMENT_DOC_FREQ, [value_id])?;
+        tx.execute(SQL_DECREMENT_DOC_FREQ, [*value_id])?;
     }
-    
+
     // Insert numbers
     for (field, values) in &prep.number_fields {
         for value in values {
             tx.execute(SQL_INSERT_FIELD_NUMBER, rusqlite::params![item_id, field, value])?;
         }
     }
-    
+
     // Insert dates
     for (field, values) in &prep.date_fields {
         for value in values {
             tx.execute(SQL_INSERT_FIELD_DATE, rusqlite::params![item_id, field, value])?;
         }
     }
-    
+
     // Insert bools
     for (field, value) in &prep.bool_fields {
         let int_value = if *value { 1 } else { 0 };
         tx.execute(SQL_INSERT_FIELD_BOOL, rusqlite::params![item_id, field, int_value])?;
     }
-    
-    // Insert FTS row
+
+    // Insert FTS row (if any text fields)
     let text_fields = schema.text_fields_in_order();
     if !text_fields.is_empty() {
         let placeholders: Vec<_> = (0..=text_fields.len()).map(|_| "?").collect();
@@ -338,15 +359,14 @@ pub fn execute_put(tx: &Transaction, schema: &Schema, prep: PutPrepared, now_ms:
             text_fields.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", "),
             placeholders.join(", ")
         );
-        
+
         let mut params: Vec<rusqlite::types::Value> = vec![item_id.into()];
         for text_val in &prep.text_cols {
             params.push(text_val.clone().into());
         }
-        
         tx.execute(&sql, rusqlite::params_from_iter(params))?;
     }
-    
+
     Ok(())
 }
 
@@ -378,6 +398,40 @@ pub fn upsert_item_row(tx: &Transaction, path: &str, data_json: &str, now_ms: i6
         )?;
         let id = tx.last_insert_rowid();
         Ok((id, now_ms))
+    }
+}
+
+/// Upsert with explicit timestamps (used for rebuild).
+pub fn upsert_item_row_with_timestamps(
+    tx: &Transaction,
+    path: &str,
+    data_json: &str,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+) -> Result<(i64, i64)> {
+    use super::sql::*;
+
+    let existing: Option<(i64, i64)> = tx
+        .query_row(
+            SQL_GET_ITEM_BY_PATH,
+            [path],
+            |row| Ok((row.get(0)?, row.get(2)?)), // id, created_at
+        )
+        .optional()?;
+
+    if let Some((id, created_at)) = existing {
+        tx.execute(
+            "UPDATE items SET data_json = ?1, created_at = ?2, updated_at = ?3 WHERE id = ?4",
+            rusqlite::params![data_json, created_at_ms, updated_at_ms, id],
+        )?;
+        Ok((id, created_at))
+    } else {
+        tx.execute(
+            "INSERT INTO items(path, data_json, created_at, updated_at) VALUES(?1, ?2, ?3, ?4)",
+            rusqlite::params![path, data_json, created_at_ms, updated_at_ms],
+        )?;
+        let id = tx.last_insert_rowid();
+        Ok((id, created_at_ms))
     }
 }
 
