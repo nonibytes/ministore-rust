@@ -135,7 +135,7 @@ pub fn run(cmd: IndexCmd) -> Result<()> {
             
             if let Some(_path) = args.apply {
                 // Apply schema change
-                 let index = Index::open(&index_path, IndexOptions::default())?;
+                 let mut index = Index::open(&index_path, IndexOptions::default())?;
                  // Load new schema
                  let content = std::fs::read_to_string(_path)?;
                  let new_schema = Schema::from_json(&content)?;

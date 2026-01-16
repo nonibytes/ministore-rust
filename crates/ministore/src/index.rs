@@ -44,6 +44,7 @@ pub struct SearchResultPage {
     pub next_cursor: Option<String>,
     pub explain_sql: Option<String>,  // present if explain==true
     pub explain_steps: Option<Vec<String>>,
+    pub has_more: bool,
 }
 
 /// Helper to shape output
@@ -297,20 +298,93 @@ impl Index {
     /// Search the index with a query string.
     pub fn search(&self, query: &str, opts: crate::db::search::SearchOptions) -> Result<SearchResultPage> {
         use crate::db::search::{plan_search, run_search, search_row_to_item_view};
-        use crate::cursor::{encode_full, hash_query};
+        use crate::cursor::{RankModeSer, CursorPosition, CursorPayload, hash_query, encode_full, decode_full, is_short_cursor_token, short_cursor_handle, make_short_handle};
+        use crate::db::sql::{SQL_CLEANUP_EXPIRED_CURSORS, SQL_GET_CURSOR, SQL_PUT_CURSOR};
+        use crate::db::put::now_ms;
         
         let conn = self.conn()?;
-        let plan = plan_search(&conn, &self.schema, query, &opts, None)?;
+
+        // cleanup expired cursors opportunistically
+        let now = now_ms();
+        let _ = conn.execute(SQL_CLEANUP_EXPIRED_CURSORS, [now]);
+
+        // compute expected hash for cursor validation
+        let schema_json = self.schema.to_json()?;
+        let rank_ser = RankModeSer::from(&opts.rank);
+        let expected_hash = hash_query(&schema_json, query, &rank_ser);
+
+        // resolve after cursor token if present
+        let after_pos: Option<CursorPosition> = if let Some(tok) = &opts.after {
+            if is_short_cursor_token(tok) {
+                let handle = short_cursor_handle(tok).ok_or_else(|| MinistoreError::Cursor("invalid short cursor".into()))?;
+                let row: Option<(String, i64)> = conn
+                    .query_row(SQL_GET_CURSOR, [handle], |r| Ok((r.get(0)?, r.get(1)?)))
+                    .optional()?;
+                let (payload_json, expires_at) = row.ok_or_else(|| MinistoreError::Cursor("cursor expired; rerun query".into()))?;
+                if expires_at < now {
+                    return Err(MinistoreError::Cursor("cursor expired; rerun query".into()));
+                }
+                let pos: CursorPosition = serde_json::from_str(&payload_json)
+                    .map_err(|e| MinistoreError::Cursor(format!("cursor json parse error: {}", e)))?;
+                Some(pos)
+            } else {
+                Some(decode_full(tok)?)
+            }
+        } else {
+            None
+        };
+
+        if let Some(pos) = &after_pos {
+            if pos.hash != expected_hash {
+                return Err(MinistoreError::Cursor("cursor does not match query/schema/rank".into()));
+            }
+        }
+
+        let plan = plan_search(&conn, &self.schema, query, &opts, after_pos.as_ref())?;
         let explain_sql = if opts.explain { Some(plan.sql.clone()) } else { None };
         let explain_steps = if opts.explain { Some(plan.explain.clone()) } else { None };
         
-        let (rows, has_more) = run_search(&conn, &self.schema, plan, opts.limit, opts.after.clone())?;
+        let (rows, has_more) = run_search(&conn, &self.schema, plan.clone(), opts.limit, opts.after.clone())?;
         
         // Generate cursor from last row if has_more
         let next_cursor = if has_more {
             if let Some(last) = rows.last() {
-                // TODO: Implement proper cursor generation (Patch 6 not fully applied)
-                None
+                // Build correct cursor payload matching ORDER BY
+                let payload: CursorPayload = match &opts.rank {
+                    RankMode::None => CursorPayload::None { item_id: last.item_id },
+                    RankMode::Recency => CursorPayload::Recency { updated_at_ms: last.updated_at, path: last.path.clone() },
+                    RankMode::Field(field) => {
+                        let rv = last.score.ok_or_else(|| MinistoreError::Cursor("missing rank_value for field rank".into()))?;
+                        CursorPayload::Field {
+                            field: field.clone(),
+                            rank_value: rv,
+                            updated_at_ms: last.updated_at,
+                            path: last.path.clone(),
+                        }
+                    }
+                    RankMode::Default => {
+                        if plan.requires_fts_rank {
+                            let score = last.score.ok_or_else(|| MinistoreError::Cursor("missing score for fts rank".into()))?;
+                            CursorPayload::Fts { score, item_id: last.item_id }
+                        } else {
+                            CursorPayload::Recency { updated_at_ms: last.updated_at, path: last.path.clone() }
+                        }
+                    }
+                };
+
+                let pos = CursorPosition { payload, hash: expected_hash.clone() };
+
+                match opts.cursor_mode {
+                    CursorMode::Full => Some(encode_full(&pos.payload, &pos.hash)?),
+                    CursorMode::Short => {
+                        let handle = make_short_handle();
+                        let created_at = now;
+                        let expires_at = now + self.opts.cursor_ttl_ms;
+                        let payload_json = serde_json::to_string(&pos)?;
+                        conn.execute(SQL_PUT_CURSOR, rusqlite::params![handle, payload_json, created_at, expires_at])?;
+                        Some(format!("c:{}", handle))
+                    }
+                }
             } else {
                 None
             }
@@ -331,6 +405,7 @@ impl Index {
             next_cursor,
             explain_sql,
             explain_steps,
+            has_more,
         })
     }
 
@@ -429,7 +504,7 @@ impl Index {
     }
 
     /// Apply additive schema changes.
-    pub fn apply_schema(&self, new_schema: Schema) -> Result<()> {
+    pub fn apply_schema(&mut self, new_schema: Schema) -> Result<()> {
         // Validate new schema
         new_schema.validate()?;
         
@@ -476,6 +551,9 @@ impl Index {
         // Update meta schema
         use crate::db::meta;
         meta::write_meta(&conn, meta::META_SCHEMA_KEY, &new_schema.to_json()?)?;
+
+        // IMPORTANT: update in-memory schema so subsequent operations use the new schema.
+        self.schema = new_schema;
         
         Ok(())
     }
