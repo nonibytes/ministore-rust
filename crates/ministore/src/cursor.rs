@@ -91,10 +91,10 @@ pub fn short_cursor_handle(token: &str) -> Option<&str> {
 }
 
 pub fn make_short_handle() -> String {
-    // base62-ish: we'll hex-encode 6 random bytes for simplicity and stability
-    let mut b = [0u8; 6];
+    // Use 12 random bytes (96 bits) for very low collision probability
+    let mut b = [0u8; 12];
     OsRng.fill_bytes(&mut b);
-    format!("{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}", b[0], b[1], b[2], b[3], b[4], b[5])
+    b.iter().map(|byte| format!("{:02x}", byte)).collect()
 }
 
 #[cfg(test)]

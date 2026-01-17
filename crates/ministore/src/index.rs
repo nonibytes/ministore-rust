@@ -378,11 +378,27 @@ impl Index {
                 match opts.cursor_mode {
                     CursorMode::Full => Some(encode_full(&pos.payload, &pos.hash)?),
                     CursorMode::Short => {
-                        let handle = make_short_handle();
                         let created_at = now;
                         let expires_at = now + self.opts.cursor_ttl_ms;
                         let payload_json = serde_json::to_string(&pos)?;
-                        conn.execute(SQL_PUT_CURSOR, rusqlite::params![handle, payload_json, created_at, expires_at])?;
+                        
+                        // Retry with new handle on collision (very unlikely with 96-bit random)
+                        let mut attempts = 0;
+                        let handle = loop {
+                            attempts += 1;
+                            if attempts > 3 {
+                                return Err(MinistoreError::Cursor("failed to generate unique cursor handle after 3 attempts".into()));
+                            }
+                            let h = make_short_handle();
+                            match conn.execute(SQL_PUT_CURSOR, rusqlite::params![h, payload_json, created_at, expires_at]) {
+                                Ok(_) => break h,
+                                Err(rusqlite::Error::SqliteFailure(err, _)) if err.code == rusqlite::ErrorCode::ConstraintViolation => {
+                                    // Handle collision - try again with new handle
+                                    continue;
+                                }
+                                Err(e) => return Err(e.into()),
+                            }
+                        };
                         Some(format!("c:{}", handle))
                     }
                 }
