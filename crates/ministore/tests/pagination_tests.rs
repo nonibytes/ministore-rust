@@ -187,3 +187,76 @@ fn test_pagination_after_field_rank() {
     sorted.sort_by(|a, b| b.partial_cmp(a).unwrap());
     assert_eq!(scores, sorted, "results were not ordered by score desc");
 }
+
+/// Test Default non-FTS fallback (Recency ordering) pagination.
+/// This exercises the CursorPayload::Recency path under RankMode::Default.
+#[test]
+fn test_pagination_after_default_recency_fallback() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("recency_paging.db");
+
+    // Schema with NO text fields => no FTS table, Default falls back to Recency ordering
+    let mut schema = Schema::new();
+    schema.add_field("category", FieldSpec::keyword(false));
+    schema.add_field("priority", FieldSpec::number(false));
+
+    let index = Index::create(&db_path, schema, IndexOptions::default()).unwrap();
+
+    // Insert 7 docs with distinct timestamps
+    for i in 0..7 {
+        index
+            .put_json(json!({
+                "path": format!("/item/{}", i),
+                "category": "test",
+                "priority": i
+            }))
+            .unwrap();
+        // Ensure distinct updated_at timestamps
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    let query = "category:test"; // keyword anchor, no FTS involved
+
+    let mut opts = SearchOptions {
+        rank: RankMode::Default, // Will fall back to Recency since no FTS
+        limit: 2,
+        after: None,
+        show: OutputFieldSelector::None,
+        explain: false,
+        cursor_mode: CursorMode::Full,
+    };
+
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut all_paths = Vec::<String>::new();
+
+    let mut cursor: Option<String> = None;
+    let mut guard = 0;
+
+    loop {
+        guard += 1;
+        assert!(guard < 20, "paging loop guard tripped (cursor never ended)");
+
+        opts.after = cursor.clone();
+        let page = index.search(query, opts.clone()).unwrap();
+
+        for p in extract_paths(&page) {
+            assert!(seen.insert(p.clone()), "duplicate across pages: {}", p);
+            all_paths.push(p);
+        }
+
+        if !page.has_more {
+            break;
+        }
+        cursor = page.next_cursor.clone();
+        assert!(cursor.is_some(), "has_more=true but next_cursor is None");
+    }
+
+    // Verify we got all 7 docs exactly once
+    assert_eq!(seen.len(), 7, "expected 7 unique docs");
+    assert_eq!(all_paths.len(), 7, "expected 7 total results");
+
+    // Verify ordering is by recency (most recent first = highest item number first)
+    // Since we inserted in order with delays, /item/6 should come first, /item/0 last
+    assert_eq!(all_paths[0], "/item/6", "most recent item should be first");
+    assert_eq!(all_paths[6], "/item/0", "oldest item should be last");
+}
