@@ -328,12 +328,14 @@ fn execute_put_internal(
             )?;
 
             // Correct doc_freq semantics:
-            // increment only if this value was NOT previously associated with this item.
-            if !old_value_ids.contains(&value_id) {
+            // Increment only if:
+            // 1. This value was NOT previously associated with this item, AND
+            // 2. We haven't already incremented for this value_id in this put (handles duplicates like ["a", "a"])
+            if !old_value_ids.contains(&value_id) && new_value_ids.insert(value_id) {
                 tx.execute(SQL_INCREMENT_DOC_FREQ, [value_id])?;
+            } else {
+                new_value_ids.insert(value_id);
             }
-
-            new_value_ids.insert(value_id);
         }
     }
 

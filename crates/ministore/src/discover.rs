@@ -85,7 +85,7 @@ pub fn discover_overview(conn: &Connection, schema: &Schema) -> Result<Vec<Value
             "SELECT COUNT(DISTINCT item_id) FROM field_present WHERE field = ?1",
             [field_name],
             |row| row.get(0),
-        ).unwrap_or(0);
+        )?;
         
         let mut obj = serde_json::Map::new();
         obj.insert("field".to_string(), Value::String(field_name.clone()));

@@ -73,12 +73,12 @@ pub fn plan_search(
     if let Some(pos) = after {
         match (&opts.rank, &pos.payload) {
             (RankMode::None, CursorPayload::None { item_id }) => {
-                after_filter_sql = Some("i.id > ?".to_string());
+                after_filter_sql = Some("item_id > ?".to_string());
                 after_params.push((*item_id).into());
             }
-            // Default w/ FTS: ORDER BY score DESC, i.id ASC
+            // Default w/ FTS: ORDER BY score DESC, item_id ASC
             (RankMode::Default, CursorPayload::Fts { score, item_id }) => {
-                after_filter_sql = Some("(score < ? OR (score = ? AND i.id > ?))".to_string());
+                after_filter_sql = Some("(score < ? OR (score = ? AND item_id > ?))".to_string());
                 after_params.push((*score).into());
                 after_params.push((*score).into());
                 after_params.push((*item_id).into());
@@ -86,7 +86,7 @@ pub fn plan_search(
             // Recency ordering and Default (non-FTS fallback): ORDER BY updated_at DESC, path ASC
             (RankMode::Recency, CursorPayload::Recency { updated_at_ms, path })
             | (RankMode::Default, CursorPayload::Recency { updated_at_ms, path }) => {
-                after_filter_sql = Some("(i.updated_at < ? OR (i.updated_at = ? AND i.path > ?))".to_string());
+                after_filter_sql = Some("(updated_at < ? OR (updated_at = ? AND path > ?))".to_string());
                 after_params.push((*updated_at_ms).into());
                 after_params.push((*updated_at_ms).into());
                 after_params.push(path.clone().into());
@@ -94,7 +94,7 @@ pub fn plan_search(
             // Field ordering: ORDER BY score DESC, updated_at DESC, path ASC (score is rank_value)
             (RankMode::Field(_), CursorPayload::Field { rank_value, updated_at_ms, path, .. }) => {
                 after_filter_sql = Some(
-                    "(score < ? OR (score = ? AND (i.updated_at < ? OR (i.updated_at = ? AND i.path > ?))))"
+                    "(score < ? OR (score = ? AND (updated_at < ? OR (updated_at = ? AND path > ?))))"
                         .to_string()
                 );
                 after_params.push((*rank_value).into());
@@ -152,7 +152,7 @@ pub fn run_search(
                 data_json: row.get(2)?,
                 created_at: row.get(3)?,
                 updated_at: row.get(4)?,
-                score: row.get(5).ok(),
+                score: row.get::<_, Option<f64>>(5)?,
             })
         })?
         .collect::<std::result::Result<_, _>>()?;

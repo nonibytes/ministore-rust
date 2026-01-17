@@ -13,6 +13,19 @@ fn parse_date_to_epoch_ms(s: &str) -> Result<i64> {
     Err(MinistoreError::QueryParse(format!("invalid date format: {}", s)))
 }
 
+/// Quote an FTS term if it contains spaces, quotes, or other special characters.
+/// This is necessary because FTS5 MATCH syntax treats spaces as term separators.
+fn quote_fts_term(term: &str) -> String {
+    // If term contains whitespace, quotes, or FTS operators, wrap in double quotes and escape internal quotes
+    if term.chars().any(|c| c.is_whitespace() || c == '"' || c == ':' || c == '*' || c == '^' || c == '(' || c == ')') {
+        // Escape internal double quotes by doubling them
+        let escaped = term.replace('"', "\"\"" );
+        format!("\"{}\"" , escaped)
+    } else {
+        term.to_string()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CompileOutput {
     pub ctes: Vec<Cte>,
@@ -288,6 +301,7 @@ impl<'a> Compiler<'a> {
                 // Build MATCH string:
                 // - field Some => "field:term"
                 // - field None => "(col1:term OR col2:term ...)"
+                let quoted_fts = quote_fts_term(&fts);
                 let match_str = if let Some(f) = field {
                     // validate text field exists
                     let spec = self.schema.get(&f).ok_or_else(|| MinistoreError::UnknownField(f.clone()))?;
@@ -297,16 +311,17 @@ impl<'a> Compiler<'a> {
                             message: "FTS predicate used on non-text field".into(),
                         });
                     }
-                    format!("{}:{}", f, fts)
+                    format!("{}:{}", f, quoted_fts)
                 } else {
                     let cols = self.schema.text_fields_in_order();
                     if cols.is_empty() {
                         return Err(MinistoreError::QueryRejected("no text fields in schema for bare text query".into()));
                     }
-                    let parts: Vec<String> = cols.into_iter().map(|(c, _)| format!("{}:{}", c, fts)).collect();
+                    let parts: Vec<String> = cols.into_iter().map(|(c, _)| format!("{}:{}", c, quoted_fts)).collect();
                     format!("({})", parts.join(" OR "))
                 };
                 let p_match = self.push_param(match_str.into());
+
                 let sql = format!("SELECT rowid AS item_id FROM search WHERE search MATCH {}", p_match);
                 
                 self.ctes.push(Cte {
@@ -589,9 +604,11 @@ pub fn build_search_sql(
     };
     
     // Build main SELECT with proper ranking
-    let select_cols = "i.id AS item_id, i.path, i.data_json, i.created_at, i.updated_at";
-    
+    // Inner query aliases columns so outer query can reference them by name
+    let select_cols_inner = "i.id AS item_id, i.path AS path, i.data_json AS data_json, i.created_at AS created_at, i.updated_at AS updated_at";
+
     // Always return a 6th column called "score" (REAL or NULL).
+    // Order clauses use unqualified names since they apply to the derived table output
     let (order_clause, score_expr, fts_join, extra_join) = if matches!(rank, RankMode::Default) && compiled.requires_fts_join {
         // Weighted BM25: score = -bm25(search, w1, w2, ...  )
         // FTS5's bm25() is "smaller is better", so negate it
@@ -603,7 +620,7 @@ pub fn build_search_sql(
         
         let score_col = format!("(-bm25(search, {}))", weights_str);
         (
-            String::from("ORDER BY score DESC, i.id ASC"),
+            String::from("ORDER BY score DESC, item_id ASC"),
             score_col,
             String::from("JOIN search ON search.rowid = i.id"),
             String::new()
@@ -612,7 +629,7 @@ pub fn build_search_sql(
         // Other ranking modes
         match rank {
             RankMode::Recency => (
-                String::from("ORDER BY i.updated_at DESC, i.path ASC"),
+                String::from("ORDER BY updated_at DESC, path ASC"),
                 String::from("CAST(i.updated_at AS REAL)"),
                 String::new(),
                 String::new()
@@ -620,14 +637,14 @@ pub fn build_search_sql(
             RankMode::Field(_field_name) => {
                 let rf = field_rank_cte_name.as_ref().expect("rank_field cte");
                 (
-                    String::from("ORDER BY score DESC, i.updated_at DESC, i.path ASC"),
+                    String::from("ORDER BY score DESC, updated_at DESC, path ASC"),
                     format!("CAST({}.rank_value AS REAL)", rf),
                     String::new(),
                     format!("JOIN {} ON {}.item_id = i.id", rf, rf)
                 )
             },
             RankMode::None => (
-                String::from("ORDER BY i.id ASC"),
+                String::from("ORDER BY item_id ASC"),
                 String::from("NULL"),
                 String::new(),
                 String::new()
@@ -635,7 +652,7 @@ pub fn build_search_sql(
             RankMode::Default => {
                 // Default without FTS - fallback to recency
                 (
-                    String::from("ORDER BY i.updated_at DESC, i.path ASC"),
+                    String::from("ORDER BY updated_at DESC, path ASC"),
                     String::from("CAST(i.updated_at AS REAL)"),
                     String::new(),
                     String::new()
@@ -644,21 +661,35 @@ pub fn build_search_sql(
         }
     };
     
-    let after_clause = after_filter.as_ref().map(|f| format!("AND ({})", f)).unwrap_or_default();
-    
+    let after_where = after_filter
+        .as_ref()
+        .map(|f| format!("AND ({})", f))
+        .unwrap_or_default();
+
+    // Inner query computes score, outer query applies after-filter and ordering.
+    // This makes `score` usable in WHERE (via derived table columns).
     let sql = format!(
-        "{}SELECT {}, {} AS score FROM items i {} {} \
-         JOIN {} r ON r.item_id = i.id \
-         WHERE 1=1 {} {} LIMIT {}",
-        with_clause,
-        select_cols,
-        score_expr,
-        fts_join,
-        extra_join,
-        compiled.result_cte_name,
-        after_clause,
-        order_clause,
-        limit_plus_one
+        "{with_clause}
+         SELECT item_id, path, data_json, created_at, updated_at, score
+         FROM (
+           SELECT {select_cols_inner}, {score_expr} AS score
+           FROM items i
+           {fts_join}
+           {extra_join}
+           JOIN {result} r ON r.item_id = i.id
+         ) q
+         WHERE 1=1 {after_where}
+         {order_clause}
+         LIMIT {limit_plus_one}",
+        with_clause = with_clause,
+        select_cols_inner = select_cols_inner,
+        score_expr = score_expr,
+        fts_join = fts_join,
+        extra_join = extra_join,
+        result = compiled.result_cte_name,
+        after_where = after_where,
+        order_clause = order_clause,
+        limit_plus_one = limit_plus_one,
     );
     
     // If RankMode::Field, caller MUST append the extra field-name param to compiled.params.

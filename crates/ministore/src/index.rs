@@ -489,6 +489,10 @@ impl Index {
 
     /// Optimize the index (VACUUM, rebuild FTS).
     pub fn optimize(&self) -> Result<()> {
+        // No-op if schema has no text fields (no FTS table exists)
+        if self.schema.text_fields_in_order().is_empty() {
+            return Ok(());
+        }
         let conn = self.conn()?;
         // Optimize FTS
         conn.execute("INSERT INTO search(search) VALUES('optimize')", [])?;
