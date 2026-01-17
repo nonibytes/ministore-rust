@@ -5,31 +5,41 @@ use crate::resolve::resolve_index_path;
 use std::time::Instant;
 
 #[derive(Args)]
+#[command(about = "Query syntax: field:value, \"text\", field>N, field:a..b")]
 pub struct SearchArgs {
+    /// Path to index file
     #[arg(short, long)]
     pub index: String,
 
-    #[arg(short='w', long="where")] // Renamed to query in help?
+    /// Query (e.g. "category:rust priority>5")
+    #[arg(short='w', long="where")]
     pub where_q: String,
 
+    /// Max results per page
     #[arg(long, default_value_t = 20)]
     pub limit: usize,
 
+    /// Cursor for pagination
     #[arg(long)]
     pub after: Option<String>,
 
-    #[arg(long, default_value="full")] 
-    pub cursor: String, // short|full - simplified to full default based on patch
+    /// Cursor mode: short|full
+    #[arg(long, default_value="full")]
+    pub cursor: String,
 
+    /// Ranking: default|recency|none|field:<name>
     #[arg(long, default_value="default")]
-    pub rank: String, // default|recency|none|field:<name>
+    pub rank: String,
 
+    /// Fields: "all" or "f1,f2"
     #[arg(long)]
-    pub show: Option<String>, // "all" or "f1,f2"
+    pub show: Option<String>,
 
+    /// Output: pretty|paths|json
     #[arg(long, default_value="pretty")]
-    pub format: String, // pretty|paths|json
+    pub format: String,
 
+    /// Show query plan
     #[arg(long)]
     pub explain: bool,
 }

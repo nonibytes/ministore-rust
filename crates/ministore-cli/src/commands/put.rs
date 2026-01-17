@@ -6,19 +6,25 @@ use std::io::Read;
 use std::fs::File;
 
 #[derive(Args)]
+#[command(about = "Single doc: --path + --set. Batch: --import file.jsonl or --json (stdin)")]
 pub struct PutArgs {
+    /// Path to index file
     #[arg(short, long)]
     pub index: String,
 
+    /// Document path (for single doc mode)
     #[arg(short, long)]
     pub path: Option<String>,
 
+    /// Set field: key=value (repeatable)
     #[arg(long="set")]
-    pub sets: Vec<String>, // "k=v"
+    pub sets: Vec<String>,
 
+    /// Read JSONL from stdin
     #[arg(long)]
     pub json: bool,
 
+    /// Import JSONL file (one JSON object per line)
     #[arg(long)]
     pub import: Option<std::path::PathBuf>,
 }

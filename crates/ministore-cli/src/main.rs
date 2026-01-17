@@ -6,7 +6,7 @@ mod commands;
 
 #[derive(Parser)]
 #[command(name="ministore")]
-#[command(about="single-file search index", long_about=None)]
+#[command(about="Single-file search index", after_help="Use `ministore <COMMAND> --help` for command details.")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -14,13 +14,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Manage indexes: create, optimize, apply-schema
     Index { #[command(subcommand)] cmd: commands::index::IndexCmd },
+    /// Insert/update docs (--path or --import JSONL)
     Put(commands::put::PutArgs),
+    /// Get document by path (full JSON)
     Get(commands::get::GetArgs),
+    /// Get document metadata only
     Peek(commands::peek::PeekArgs),
+    /// Delete by path or query
     Delete(commands::delete::DeleteArgs),
+    /// Query documents (returns matches)
     Search(commands::search::SearchArgs),
+    /// Explore field values
     Discover { #[command(subcommand)] cmd: commands::discover::DiscoverCmd },
+    /// Compute min/max/avg for fields
     Stats(commands::stats::StatsArgs),
 }
 

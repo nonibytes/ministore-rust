@@ -6,13 +6,20 @@ use std::collections::BTreeMap;
 
 #[derive(Subcommand)]
 pub enum IndexCmd {
+    /// Create index (--schema file or --field name:type)
     Create(CreateArgs),
+    /// List indexes in current directory
     List(ListArgs),
+    /// Show/apply schema (--apply to update)
     Schema(SchemaArgs),
+    /// Migrate to new schema (rebuilds)
     Migrate(MigrateArgs),
+    /// Show doc count, size
     Stats(IndexStatsArgs),
+    /// Vacuum + rebuild FTS
     Optimize(OptimizeArgs),
-    Drop(DropArgs), // Not in library, maybe manual file deletion
+    /// Delete index file
+    Drop(DropArgs),
 }
 
 #[derive(Args)]
