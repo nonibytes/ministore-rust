@@ -24,7 +24,7 @@ pub struct SearchArgs {
     pub after: Option<String>,
 
     /// Cursor mode: short|full
-    #[arg(long, default_value="full")]
+    #[arg(long, default_value="short")]
     pub cursor: String,
 
     /// Ranking: default|recency|none|field:<name>
