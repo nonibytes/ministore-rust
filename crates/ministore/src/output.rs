@@ -58,7 +58,12 @@ pub fn format_search_results(
 
 fn format_pretty(page: &SearchResultPage, elapsed: Option<Duration>) -> Result<String> {
     let mut output = String::new();
-    write!(&mut output, "Found {} items", page.items.len()).unwrap();
+    let item_label = if page.items.len() == 1 {
+        "item"
+    } else {
+        "items"
+    };
+    write!(&mut output, "Found {} {item_label}", page.items.len()).unwrap();
     if let Some(elapsed) = elapsed {
         write!(&mut output, " in {}ms", elapsed.as_millis()).unwrap();
     }
@@ -196,6 +201,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(formatted, "/guides/search\n/notes/sqlite\n");
+    }
+
+    #[test]
+    fn uses_singular_item_label() {
+        let page = SearchResultPage {
+            items: vec![json!({"path": "/one"})],
+            next_cursor: None,
+            explain_sql: None,
+            explain_steps: None,
+            has_more: false,
+        };
+        let formatted = format_search_results(&page, &SearchOutputOptions::default()).unwrap();
+        assert_eq!(formatted, "Found 1 item\n- /one\n");
     }
 
     #[test]

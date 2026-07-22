@@ -46,6 +46,17 @@ func TestFormatSearchResultsPaths(t *testing.T) {
 	}
 }
 
+func TestFormatSearchResultsPrettyUsesSingularItem(t *testing.T) {
+	result := SearchResult{Items: []json.RawMessage{json.RawMessage(`{"path":"/one"}`)}}
+	formatted, err := FormatSearchResults(result, SearchOutputOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if formatted != "Found 1 item\n- /one\n" {
+		t.Fatalf("unexpected singular output: %q", formatted)
+	}
+}
+
 func TestFormatSearchResultsJSON(t *testing.T) {
 	formatted, err := FormatSearchResults(outputSample(), SearchOutputOptions{Format: SearchOutputJSON})
 	if err != nil {
