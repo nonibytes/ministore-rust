@@ -39,4 +39,7 @@ pub enum MinistoreError {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error("invalid argument: {0}")]
+    InvalidArgument(String),
 }

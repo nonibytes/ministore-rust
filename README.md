@@ -67,7 +67,10 @@ cat documents.json | ministore put -i docs --json
 ### Using the Library
 
 ```rust
-use ministore::{Index, Schema, FieldSpec, IndexOptions};
+use ministore::{
+    format_search_results, FieldSpec, Index, IndexOptions, OutputFieldSelector,
+    Schema, SearchOptions, SearchOutputFormat, SearchOutputOptions,
+};
 use serde_json::json;
 
 // Create a schema
@@ -91,17 +94,32 @@ index.put_json(json!({
 
 // Search
 let results = index.search(
-    Some("rust programming"),
-    None,  // limit
-    None,  // cursor
-    None,  // rank
-    None,  // show
-    false, // explain
+    "rust programming",
+    SearchOptions {
+        limit: 10,
+        show: OutputFieldSelector::Fields(vec!["title".into(), "tags".into()]),
+        ..SearchOptions::default()
+    },
 )?;
 
-for item in results.items {
-    println!("{}: {}", item.path, item.data["title"]);
-}
+print!("{}", format_search_results(
+    &results,
+    &SearchOutputOptions {
+        format: SearchOutputFormat::Pretty,
+        elapsed: None,
+    },
+)?);
+```
+
+The CLI and Rust library use the same formatter. `pretty` produces compact
+human-readable text, `paths` emits one path per line, and `json` emits a stable
+page envelope:
+
+```text
+Found 1 item
+- /blog/hello-world
+  tags: ["rust","tutorial"]
+  title: Hello World
 ```
 
 ### Using from Go without CGO
@@ -123,6 +141,7 @@ CGO_ENABLED=0 go test ./...
 package main
 
 import (
+    "fmt"
     "log"
 
     ministore "github.com/nonibytes/ministore-rust/go"
@@ -153,11 +172,21 @@ func main() {
         log.Fatal(err)
     }
 
-    results, err := index.Search("Hello", ministore.SearchOptions{Limit: 10})
+    results, err := index.Search("Hello", ministore.SearchOptions{
+        Limit: 10,
+        Show: "fields",
+        Fields: []string{"title", "tags"},
+    })
     if err != nil {
         log.Fatal(err)
     }
-    log.Printf("matches: %d", len(results.Items))
+    output, err := ministore.FormatSearchResults(results, ministore.SearchOutputOptions{
+        Format: ministore.SearchOutputPretty,
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Print(output)
 }
 ```
 
