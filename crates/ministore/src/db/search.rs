@@ -109,7 +109,7 @@ pub fn plan_search(
         }
     }
     
-    let (mut sql, mut params) = build_search_sql(
+    let (sql, mut params) = build_search_sql(
         schema,
         compiled.clone(),
         &opts.rank,

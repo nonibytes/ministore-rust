@@ -1,8 +1,8 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use crate::{Result, Schema, MinistoreError, ItemView};
 use rusqlite::OptionalExtension;
-use crate::cursor::{RankModeSer, CursorPayload};
 
 #[derive(Debug, Clone)]
 pub struct IndexOptions {
@@ -84,6 +84,7 @@ fn shape_item(view: ItemView, selector: &OutputFieldSelector) -> Value {
 pub struct Index {
     db_path: PathBuf,
     schema: Schema,
+    conn: Mutex<rusqlite::Connection>,
     #[allow(dead_code)]
     opts: IndexOptions,
 }
@@ -126,12 +127,10 @@ impl Index {
         meta::write_meta(&conn, meta::META_VERSION_KEY, meta::META_VERSION_VAL)?;
         meta::write_meta(&conn, meta::META_SCHEMA_KEY, &schema.to_json()?)?;
         
-        // Close connection (Index will open its own connections on demand)
-        drop(conn);
-        
         Ok(Self {
             db_path,
             schema,
+            conn: Mutex::new(conn),
             opts,
         })
     }
@@ -186,12 +185,10 @@ impl Index {
             PRAGMA foreign_keys=ON;
         ")?;
         
-        // Close connection
-        drop(conn);
-        
         Ok(Self {
             db_path,
             schema,
+            conn: Mutex::new(conn),
             opts,
         })
     }
@@ -206,9 +203,11 @@ impl Index {
         &self.db_path
     }
 
-    /// Open a connection to the database (internal helper).
-    fn conn(&self) -> Result<rusqlite::Connection> {
-        Ok(rusqlite::Connection::open(&self.db_path)?)
+    /// Borrow the index's persistent database connection.
+    fn conn(&self) -> Result<MutexGuard<'_, rusqlite::Connection>> {
+        self.conn
+            .lock()
+            .map_err(|_| MinistoreError::Internal("database connection lock poisoned".into()))
     }
 
 
@@ -572,6 +571,7 @@ impl Index {
         // Update meta schema
         use crate::db::meta;
         meta::write_meta(&conn, meta::META_SCHEMA_KEY, &new_schema.to_json()?)?;
+        drop(conn);
 
         // IMPORTANT: update in-memory schema so subsequent operations use the new schema.
         self.schema = new_schema;
@@ -586,5 +586,38 @@ impl Index {
         let count = batch.execute(&tx, &self.schema)?;
         tx.commit()?;
         Ok(count)
+    }
+}
+
+#[cfg(test)]
+mod connection_tests {
+    use super::*;
+    use crate::FieldSpec;
+    use tempfile::TempDir;
+
+    #[test]
+    fn reuses_connection_between_operations() {
+        let temp_dir = TempDir::new().unwrap();
+        let db_path = temp_dir.path().join("persistent.db");
+        let mut schema = Schema::new();
+        schema.add_field("active", FieldSpec::bool());
+        let index = Index::create(&db_path, schema, IndexOptions::default()).unwrap();
+
+        index
+            .conn()
+            .unwrap()
+            .execute("CREATE TEMP TABLE connection_marker (value INTEGER)", [])
+            .unwrap();
+        let marker_exists: i64 = index
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_temp_master WHERE name = 'connection_marker'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(marker_exists, 1);
     }
 }
