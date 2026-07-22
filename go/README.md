@@ -60,8 +60,10 @@ count, err := index.BatchPutJSON([][]byte{
 
 All returned strings are copied into Go-owned memory and immediately released
 through the Rust allocator. Rust panics are caught at the ABI boundary and
-returned as Go errors. Calls on one `Index` are safe to make concurrently with
-reads; `Close` waits for active calls through the Go handle lock.
+returned as Go errors. Calls on one `Index` are thread-safe, and `Close` waits
+for active calls through the Go handle lock. The Rust index retains one SQLite
+connection and serializes operations on that connection; use separate indexes
+when application-level concurrency requires independent database connections.
 
 ## Deployment
 

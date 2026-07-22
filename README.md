@@ -404,10 +404,12 @@ Ministore is designed for embedded use cases with thousands to millions of docum
 For larger datasets, use `optimize` periodically to maintain performance.
 
 The in-process 100k-document benchmark measured Rust through the CGO-free Go
-binding at 12.7s for import versus 11.1s for native Rust, 22.9s for Go/CGO, and
-29.3s for pure Go SQLite. Needle searches through the binding remained below
-one millisecond. See the [library benchmark](benchmarks/library/README.md) for
-the full results and reproducible methodology.
+binding at 9.57s for import versus 9.46s for native Rust, 20.62s for Go/CGO,
+and 26.17s for pure-Go SQLite. With every implementation reusing an open
+database connection or pool, native Rust had the lowest latency on all five
+searches; the purego binding added 0.012–0.029ms on narrow queries. See the
+[library benchmark](benchmarks/library/README.md) for the full results,
+concurrency caveat, and reproducible methodology.
 
 ## Use Cases
 
