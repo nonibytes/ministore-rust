@@ -58,6 +58,30 @@ count, err := index.BatchPutJSON([][]byte{
 })
 ```
 
+Search results can be rendered with the same text conventions as the Rust CLI:
+
+```go
+result, err := index.Search("memory", ministorerust.SearchOptions{
+    Limit: 10,
+    Show: "fields",
+    Fields: []string{"title", "category"},
+})
+if err != nil {
+    return err
+}
+output, err := ministorerust.FormatSearchResults(result, ministorerust.SearchOutputOptions{
+    Format: ministorerust.SearchOutputPretty,
+})
+if err != nil {
+    return err
+}
+fmt.Print(output)
+```
+
+`SearchOutputPretty` produces compact human-readable records,
+`SearchOutputPaths` emits one path per line, and `SearchOutputJSON` emits the
+complete structured page.
+
 All returned strings are copied into Go-owned memory and immediately released
 through the Rust allocator. Rust panics are caught at the ABI boundary and
 returned as Go errors. Calls on one `Index` are thread-safe, and `Close` waits
