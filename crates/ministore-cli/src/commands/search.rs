@@ -1,6 +1,8 @@
 use clap::Args;
-use ministore::{Result, Index, SearchOptions, RankMode, CursorMode, OutputFieldSelector, IndexOptions};
-use crate::output::{OutputFormat, print_search_results};
+use ministore::{
+    format_search_results, CursorMode, Index, IndexOptions, OutputFieldSelector, RankMode, Result,
+    SearchOptions, SearchOutputFormat, SearchOutputOptions,
+};
 use crate::resolve::resolve_index_path;
 use std::time::Instant;
 
@@ -65,7 +67,7 @@ pub fn run(args: SearchArgs) -> Result<()> {
     };
     
     // Parse format
-    let format = args.format.parse::<OutputFormat>().unwrap_or(OutputFormat::Pretty);
+    let format = args.format.parse::<SearchOutputFormat>()?;
     
     // Parse cursor mode
     let cursor_mode = match args.cursor.as_str() {
@@ -87,7 +89,13 @@ pub fn run(args: SearchArgs) -> Result<()> {
     let page = index.search(&args.where_q, opts)?;
     let duration = start.elapsed();
     
-    print_search_results(format, &page, duration.as_millis());
+    print!("{}", format_search_results(
+        &page,
+        &SearchOutputOptions {
+            format,
+            elapsed: Some(duration),
+        },
+    )?);
     
     Ok(())
 }

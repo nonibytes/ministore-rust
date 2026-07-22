@@ -11,6 +11,7 @@ pub mod stats;
 pub mod batch;
 pub mod db;
 pub mod constants;
+pub mod output;
 
 // Re-exports
 pub use error::{MinistoreError, Result};
@@ -22,3 +23,4 @@ pub use index::{
 };
 pub use db::search::SearchOptions;
 pub use batch::Batch;
+pub use output::{format_search_results, SearchOutputFormat, SearchOutputOptions};
