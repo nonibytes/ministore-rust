@@ -76,5 +76,6 @@ CGO-free from the Go build system's perspective:
 CGO_ENABLED=0 go build ./cmd/myapp
 ```
 
-Windows is not currently supported by this wrapper because its dynamic-library
-loader uses the Unix `dlopen` interface exposed by purego.
+The wrapper supports Linux, macOS, FreeBSD, and NetBSD. It does not support
+Windows because its dynamic-library loader uses the Unix `dlopen` interface
+exposed by purego.

@@ -48,18 +48,15 @@ Average hot search latency:
 | Complex | 0.081ms | 0.110ms | 0.140ms | 0.317ms |
 | Broad, 100 results | 12.272ms | 13.301ms | 12.440ms | 19.411ms |
 
-These results remove the connection-lifecycle mismatch from the previous run.
-The Rust `Index` now retains its SQLite connection instead of opening one for
-every operation, while Go retains its `database/sql` pool. Native Rust is the
-fastest implementation on all five searches in this run, although the native
-Rust and CGO results are effectively close on the keyword, number, and broad
-queries.
+The Rust `Index` retains one SQLite connection, while Go retains its
+`database/sql` pool. This gives every implementation a reusable connection
+lifecycle for the measured searches. Native Rust has the lowest latency on all
+five searches, although the native Rust and CGO results are effectively close
+on the keyword, number, and broad queries.
 
-The previous per-operation connection behavior cost much more than the query
-itself for narrow searches: the four simple native Rust measurements fell from
-roughly 0.48–0.60ms to 0.046–0.084ms. The Go → Rust path remains close to native
-Rust. Its additional work includes the purego call and JSON serialization across
-the ABI; that cost is most visible when returning 100 broad-query results.
+Go → Rust adds 0.012–0.029ms to the narrow native Rust calls. Its additional
+work includes the purego call and JSON serialization across the ABI; that cost
+is most visible when returning 100 broad-query results.
 
 The Rust index uses one mutex-protected persistent connection, so operations on
 the same `Index` are thread-safe but serialized. This benchmark is deliberately
