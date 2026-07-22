@@ -1,9 +1,17 @@
-Below is a repo-grade design spec for **ministore v1** in Rust (library + CLI), using **rusqlite** and SQLite **FTS5**, with every mechanic pinned down to concrete structs, modules, SQL shapes, and function signatures—**but intentionally stopping short of implementation** (bodies are described, not written).
+This document specifies the core **Ministore v1** storage and query design in
+Rust using **rusqlite** and SQLite **FTS5**. Code blocks define reference shapes
+for structs, modules, SQL, and function signatures; the source tree is
+authoritative for implementation details.
 
-The layout is a Cargo workspace with two crates:
+The Cargo workspace contains four crates:
 
-* `crates/ministore` → reusable library (future bindings target)
+* `crates/ministore` → reusable library and bindings core
 * `crates/ministore-cli` → CLI that depends on the library
+* `crates/ministore-ffi` → stable C ABI over opaque index handles
+* `crates/ministore-library-bench` → native in-process benchmark harness
+
+The `go` module provides the CGO-free purego wrapper, and
+`benchmarks/library/go` provides the Go benchmark harness.
 
 At the end there’s a **Python expansion script** that can turn this document into a skeleton repo by extracting the per-file code blocks.
 
@@ -1503,7 +1511,7 @@ impl<'a> Batch<'a> {
 
 Pinned rule:
 
-* `Index::batch()` (method not shown earlier; add it if desired) returns `Batch` with a single transaction.
+* `Index::batch()` returns `Batch` with a single transaction.
 * `commit()` required; if dropped without commit, transaction rolls back.
 
 (If you want “commit on drop”, flip the rule; but it’s riskier for bindings.)
@@ -1933,7 +1941,7 @@ If `SearchOptions.explain == true`:
 
 ---
 
-# Binding-readiness decisions (future Python/Go)
+# Binding ABI decisions
 
 * Public API stays serde_json-based.
 * No rusqlite types leak to public.
@@ -1941,10 +1949,9 @@ If `SearchOptions.explain == true`:
 * Search returns fully materialized JSON values.
 * Cursor payload is JSON serializable and stable.
 
-If/when you add FFI:
-
-* Add a third crate `ministore-ffi` that wraps `Index` in opaque pointers and exposes C ABI.
-* Python/Go bindings can sit on top.
+The `ministore-ffi` crate wraps `Index` in opaque handles and exposes a stable C
+ABI. Language bindings use this ABI without exposing rusqlite types or Rust
+lifetimes.
 
 ---
 

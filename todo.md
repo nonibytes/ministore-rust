@@ -1,13 +1,13 @@
-# Minisore Ops & Scaling TODOs
+# Ministore operations and scaling roadmap
 
 This document captures the actionable TODOs for making **ministore** (and the `ministore` CLI + potential service wrapper) viable for high-QPS, mostly-read workloads, with rare offline rebuilds and hot-swaps.
 
-## Current decisions (assumed for this plan)
+## Scope assumptions
 
 - Data updates are **rare** (e.g., weekly) and can be handled via **offline rebuild + hot swap**.
 - Query traffic is **high**, mostly **read-only**.
 - **Short cursor** tokens can be **mapped locally** (agent runtime / CLI wrapper), while services can prefer **full cursors** for portability.
-- We want to preserve *all ministore features*: FTS-ish text search, keyword search with wildcards/guardrails, numeric/date filters, ranking modes, stable pagination, discover/stats.
+- Backend and service work must preserve all Ministore features: FTS text search, keyword search with wildcards and guardrails, numeric/date filters, ranking modes, stable pagination, discovery, and statistics.
 
 ---
 
@@ -61,9 +61,8 @@ This document captures the actionable TODOs for making **ministore** (and the `m
 - [ ] Enforce “no writes” in service mode (cursor store moved elsewhere or local-only).
 
 ### 3.2 Connection management
-- [ ] Decide strategy:
-  - [ ] Per-request connection (simpler; may be slower).
-  - [ ] Connection pool (likely needed at high concurrency).
+- [x] Reuse one mutex-protected connection per `Index` for sequential and low-concurrency workloads.
+- [ ] Add an optional connection pool for concurrent read scaling.
 - [ ] Decide pool size heuristic (e.g., cores * N; benchmark-driven).
 
 ### 3.3 Pragmas & caching plan (service mode)

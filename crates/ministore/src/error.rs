@@ -36,4 +36,7 @@ pub enum MinistoreError {
 
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("internal error: {0}")]
+    Internal(String),
 }

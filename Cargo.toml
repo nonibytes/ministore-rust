@@ -3,4 +3,6 @@ resolver = "2"
 members = [
   "crates/ministore",
   "crates/ministore-cli",
+  "crates/ministore-ffi",
+  "crates/ministore-library-bench",
 ]
