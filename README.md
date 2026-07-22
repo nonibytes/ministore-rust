@@ -12,7 +12,7 @@ A lightweight, embedded document search engine built on SQLite and FTS5. Ministo
 - **Schema Management**: Define schemas with multiple field types and multi-value support
 - **Batch Operations**: Transactional batch inserts and deletes
 - **Zero Dependencies**: Single-file SQLite database with no external services
-- **CLI & Library**: Use as a Rust library or standalone command-line tool
+- **CLI & Libraries**: Use from Rust, from Go without CGO, or as a standalone CLI
 
 ## Installation
 
@@ -103,6 +103,67 @@ for item in results.items {
     println!("{}: {}", item.path, item.data["title"]);
 }
 ```
+
+### Using from Go without CGO
+
+The `go` module loads the Rust shared library at runtime through
+[`purego`](https://github.com/ebitengine/purego). The Go compiler never invokes
+CGO; SQLite and the search engine remain inside the native Rust library.
+
+Build the shared library, then build or test the Go application with CGO
+disabled:
+
+```bash
+cargo build --release -p ministore-ffi
+cd go
+CGO_ENABLED=0 go test ./...
+```
+
+```go
+package main
+
+import (
+    "log"
+
+    ministore "github.com/nonibytes/ministore-rust/go"
+)
+
+func main() {
+    library, err := ministore.Load("../target/release/libministore_ffi.so")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer library.Close()
+
+    weight := 2.0
+    index, err := library.Create("docs.db", ministore.Schema{
+        Fields: map[string]ministore.FieldSpec{
+            "title": {Type: ministore.FieldText, Weight: &weight},
+            "tags":  {Type: ministore.FieldKeyword, Multi: true},
+        },
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer index.Close()
+
+    if err := index.PutJSON([]byte(
+        `{"path":"/hello","title":"Hello from Rust","tags":["example"]}`,
+    )); err != nil {
+        log.Fatal(err)
+    }
+
+    results, err := index.Search("Hello", ministore.SearchOptions{Limit: 10})
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("matches: %d", len(results.Items))
+}
+```
+
+Linux, macOS, FreeBSD, and NetBSD are supported. The shared library is a
+runtime artifact and must be shipped with the Go application. See
+[go/README.md](go/README.md) for packaging, batching, and lifecycle details.
 
 ## Query Language
 
@@ -342,6 +403,12 @@ Ministore is designed for embedded use cases with thousands to millions of docum
 
 For larger datasets, use `optimize` periodically to maintain performance.
 
+The in-process 100k-document benchmark measured Rust through the CGO-free Go
+binding at 12.7s for import versus 11.1s for native Rust, 22.9s for Go/CGO, and
+29.3s for pure Go SQLite. Needle searches through the binding remained below
+one millisecond. See the [library benchmark](benchmarks/library/README.md) for
+the full results and reproducible methodology.
+
 ## Use Cases
 
 - **Documentation Search**: Index and search technical documentation
@@ -357,6 +424,7 @@ Ministore is built on:
 - **SQLite**: Reliable, embedded database engine
 - **FTS5**: Full-text search extension with BM25 ranking
 - **Rust**: Memory-safe, high-performance implementation
+- **purego ABI**: Idiomatic Go API without compiling the Go application with CGO
 
 The query planner translates the query language into optimized SQL, leveraging SQLite's query optimizer and FTS5's ranking capabilities.
 
