@@ -108,14 +108,14 @@ impl ValidationStage {
         Ok(())
     }
 
-    pub(crate) fn next_concept_path(&self, after: &str) -> Result<Option<String>> {
+    pub(crate) fn next_entry_path(&self, kind: &str, after: &str) -> Result<Option<String>> {
         Ok(self
             .connection
             .query_row(
                 r#"SELECT path FROM entries
-                   WHERE kind = 'concept' AND path > ?1 COLLATE BINARY
+                   WHERE kind = ?1 AND path > ?2 COLLATE BINARY
                    ORDER BY path COLLATE BINARY LIMIT 1"#,
-                [after],
+                params![kind, after],
                 |row| row.get(0),
             )
             .optional()?)

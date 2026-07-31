@@ -7,6 +7,8 @@ use crate::model::{ValidateOptions, ValidationSummary};
 use crate::staging::ValidationStage;
 use crate::{OkfError, Result};
 
+mod reserved;
+
 const DEFAULT_TARGET_VERSION: &str = "0.2";
 
 pub fn validate_bundle<F>(
@@ -40,6 +42,7 @@ where
         transaction.commit()?;
     }
     validate_staged_concepts(&mut stage, &root)?;
+    validate_staged_reserved_files(&mut stage, &root)?;
     let summary = stage.summary(root_string, target_version)?;
     stage.emit_findings(emit)?;
     Ok(summary)
@@ -109,7 +112,7 @@ fn classify_entry(name: &std::ffi::OsStr, file_type: &fs::FileType) -> Result<&'
 fn validate_staged_concepts(stage: &mut ValidationStage, root: &Path) -> Result<()> {
     let mut after = String::new();
     loop {
-        let Some(relative) = stage.next_concept_path(&after)? else {
+        let Some(relative) = stage.next_entry_path("concept", &after)? else {
             return Ok(());
         };
         after.clone_from(&relative);
@@ -123,6 +126,30 @@ fn validate_staged_concepts(stage: &mut ValidationStage, root: &Path) -> Result<
         }
         transaction.commit()?;
     }
+}
+
+fn validate_staged_reserved_files(stage: &mut ValidationStage, root: &Path) -> Result<()> {
+    for kind in ["index", "log"] {
+        let mut after = String::new();
+        loop {
+            let Some(relative) = stage.next_entry_path(kind, &after)? else {
+                break;
+            };
+            after.clone_from(&relative);
+            let raw = fs::read(root.join(&relative))?;
+            let findings = if kind == "index" {
+                reserved::validate_index(&relative, &raw)?
+            } else {
+                reserved::validate_log(&relative, &raw)
+            };
+            let transaction = stage.transaction()?;
+            for finding in &findings {
+                ValidationStage::insert_finding(&transaction, finding)?;
+            }
+            transaction.commit()?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_concept_base(document: &crate::Document) -> Vec<Finding> {

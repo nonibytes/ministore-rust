@@ -42,6 +42,10 @@ impl Document {
         self.body.map(|range| &self.raw[range.start..range.end])
     }
 
+    pub(crate) fn body_offset(&self) -> Option<usize> {
+        self.body.map(|range| range.start)
+    }
+
     pub fn metadata(&self) -> Option<&Metadata> {
         self.metadata.as_ref()
     }

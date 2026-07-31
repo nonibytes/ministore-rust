@@ -1,4 +1,4 @@
-173c419fd191390e2102e9c4336c77f63f4fa7a54a2acf39a0b8af74456f8604  ./expected/base-validation.jsonl
+f677493068e9eae82956c4ed670f4defbb2142d1ddb17aa47e59bc6ccba687ac  ./expected/base-validation.jsonl
 ad2bac7a420667191399c2d219ec05cce283d347fc807a25e5690698fa673074  ./invalid/invalid-yaml/concept.md
 a9520b752d6b26a3b5ceb4fee6c65e6a6d4e577055a590d817ca0a37c6b5d56b  ./invalid/malformed-index/concept.md
 3cfb2465a5f9a3cecd451329530002bacde079c095b4396f76507eed886c2538  ./invalid/malformed-index/index.md

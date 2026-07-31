@@ -122,6 +122,20 @@ fn validates_base_conformance_fixtures() {
             warnings: 0,
             codes: &[FindingCode::OKF103],
         },
+        Case {
+            name: "invalid/malformed-index",
+            concepts: 1,
+            errors: 2,
+            warnings: 0,
+            codes: &[FindingCode::OKF201, FindingCode::OKF202],
+        },
+        Case {
+            name: "invalid/malformed-log",
+            concepts: 0,
+            errors: 1,
+            warnings: 0,
+            codes: &[FindingCode::OKF203],
+        },
     ];
 
     for case in cases {
