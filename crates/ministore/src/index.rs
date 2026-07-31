@@ -261,6 +261,26 @@ impl Index {
         })
     }
 
+    /// Yield item paths with the literal prefix in ascending bytewise order.
+    ///
+    /// The callback must not recursively operate on this index because the scan
+    /// retains the index connection lock while rows are being yielded.
+    pub fn scan_paths<F>(&self, prefix: &str, mut yield_path: F) -> Result<()>
+    where
+        F: FnMut(&str) -> Result<()>,
+    {
+        use crate::db::sql::SQL_SCAN_PATHS;
+
+        let conn = self.conn()?;
+        let mut statement = conn.prepare(SQL_SCAN_PATHS)?;
+        let mut rows = statement.query([prefix])?;
+        while let Some(row) = rows.next()? {
+            let path: String = row.get(0)?;
+            yield_path(&path)?;
+        }
+        Ok(())
+    }
+
     /// Peek at an item (just the JSON).
     pub fn peek(&self, path: &str) -> Result<Value> {
         let view = self.get(path)?;
