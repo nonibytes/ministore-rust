@@ -599,13 +599,37 @@ impl Index {
         Ok(())
     }
 
-    /// Execute a batch of operations in a transaction.
-    pub fn batch(&self, batch: crate::batch::Batch) -> Result<usize> {
+    /// Stream operations into one transaction and commit only if the callback
+    /// and every writer operation succeed.
+    ///
+    /// The callback must not recursively operate on this index because the
+    /// connection lock is retained for the transaction.
+    pub fn write_batch<F>(&self, write: F) -> Result<usize>
+    where
+        F: FnOnce(&mut crate::batch::BatchWriter<'_, '_>) -> Result<()>,
+    {
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
-        let count = batch.execute(&tx, &self.schema)?;
+        let (count, failed) = {
+            let mut writer = crate::batch::BatchWriter::new(&tx, &self.schema);
+            write(&mut writer)?;
+            (writer.count(), writer.failed())
+        };
+        if failed {
+            return Err(MinistoreError::Internal(
+                "batch operation failed; transaction rolled back".into(),
+            ));
+        }
         tx.commit()?;
         Ok(count)
+    }
+
+    /// Execute an in-memory batch through the streamed transaction writer.
+    pub fn batch(&self, batch: crate::batch::Batch) -> Result<usize> {
+        if batch.is_empty() {
+            return Ok(0);
+        }
+        self.write_batch(|writer| batch.write_to(writer))
     }
 }
 
