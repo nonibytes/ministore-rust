@@ -429,7 +429,7 @@ impl Index {
         };
 
         let items_view: Vec<ItemView> = rows.into_iter()
-            .map(|r| search_row_to_item_view(r))
+            .map(search_row_to_item_view)
             .collect::<Result<Vec<_>>>()?;
             
         let items: Vec<Value> = items_view.into_iter()
@@ -582,8 +582,7 @@ impl Index {
         let conn = self.conn()?;
         
         // Add new text columns
-        for i in current_text.len()..new_text.len() {
-            let (name, _) = &new_text[i];
+        for (name, _) in new_text.iter().skip(current_text.len()) {
             let sql = format!("ALTER TABLE search ADD COLUMN {}", name);
             conn.execute(&sql, [])?;
         }

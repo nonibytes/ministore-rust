@@ -217,6 +217,8 @@ pub extern "C" fn ministore_optimize(handle: u64) -> *mut c_char {
 }
 
 #[no_mangle]
+/// # Safety
+/// `value` must be null or a pointer returned by this library that has not already been freed.
 pub unsafe extern "C" fn ministore_string_free(value: *mut c_char) {
     if !value.is_null() {
         drop(CString::from_raw(value));

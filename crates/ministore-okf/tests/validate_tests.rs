@@ -263,3 +263,18 @@ fn assert_codes(findings: &[Finding], expected: &[FindingCode]) {
     let actual: Vec<_> = findings.iter().map(|finding| finding.code).collect();
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn unicode_case_fold_collision() {
+    let root = tempfile::tempdir().unwrap();
+    for name in ["Straße.md", "STRASSE.md"] {
+        fs::write(root.path().join(name), "---\ntype: Note\n---\nx\n").unwrap()
+    }
+    let mut found = false;
+    validate_bundle(root.path(), &ValidateOptions::default(), |finding| {
+        found |= finding.code == FindingCode::OKF204;
+        Ok(())
+    })
+    .unwrap();
+    assert!(found);
+}

@@ -5,6 +5,7 @@ use crate::finding::{Finding, FindingCode, Severity};
 use crate::yaml::{CollectionForm, Metadata, Node};
 use crate::Document;
 
+use super::families::{validate_attested_computation, validate_provenance_and_trust};
 use super::reserved::byte_position;
 
 pub(super) fn validate_concept_advisories(document: &Document) -> Vec<Finding> {
@@ -64,6 +65,8 @@ pub(super) fn validate_concept_advisories(document: &Document) -> Vec<Finding> {
         }
     }
     findings.extend(legacy_citations_findings(document));
+    findings.extend(validate_provenance_and_trust(document));
+    findings.extend(validate_attested_computation(document));
     findings
 }
 

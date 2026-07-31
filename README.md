@@ -459,6 +459,29 @@ Ministore is built on:
 
 The query planner translates the query language into optimized SQL, leveraging SQLite's query optimizer and FTS5's ranking capabilities.
 
+## Open Knowledge Format (OKF)
+
+The CLI validates and atomically synchronizes OKF v0.2 bundles into a dedicated
+SQLite index:
+
+```bash
+ministore okf validate --bundle ./knowledge --format json
+ministore okf sync --bundle ./knowledge --index knowledge.db
+ministore okf sync --bundle ./knowledge --index knowledge.db --dry-run
+```
+
+`--strict` makes advisory warnings fail the command. Processing stages bundle and
+graph state in a private temporary SQLite database and materializes one concept at
+a time, so aggregate bundle bytes are not retained in application memory. The
+stage can contain sensitive source and is removed on success and handled failure;
+use the platform temporary-directory setting to place it on appropriately sized
+storage. Exact input is retrievable from `raw_document` after synchronization.
+
+The target must use the canonical OKF schema and is treated as dedicated to the
+selected bundle; absent paths are deleted. To rebuild, remove that dedicated index
+and synchronize again. Ordinary MiniStore queries can filter fields such as
+`trust_tier`, `tags`, `source_resources`, and `backlinks`.
+
 ## Contributing
 
 Contributions are welcome! Please see [DESIGN.detailed.md](DESIGN.detailed.md) for architecture details.

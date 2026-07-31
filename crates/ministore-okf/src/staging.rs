@@ -13,8 +13,14 @@ use crate::Result;
 const STAGE_DDL: &str = r#"
 CREATE TABLE entries (
     path TEXT PRIMARY KEY COLLATE BINARY,
-    kind TEXT NOT NULL
+    kind TEXT NOT NULL,
+    folded_path TEXT NOT NULL
 );
+CREATE TABLE concepts (path TEXT PRIMARY KEY COLLATE BINARY, raw BLOB NOT NULL);
+CREATE TABLE link_candidates (id INTEGER PRIMARY KEY, source TEXT NOT NULL COLLATE BINARY, destination TEXT NOT NULL, line INTEGER, column INTEGER);
+CREATE TABLE edges (source TEXT NOT NULL COLLATE BINARY, target TEXT NOT NULL COLLATE BINARY, PRIMARY KEY(source,target));
+CREATE TABLE existing_paths (path TEXT PRIMARY KEY COLLATE BINARY);
+CREATE TABLE actions (path TEXT PRIMARY KEY COLLATE BINARY, kind TEXT NOT NULL);
 CREATE TABLE findings (
     id INTEGER PRIMARY KEY,
     severity TEXT NOT NULL,
@@ -36,7 +42,7 @@ CREATE INDEX findings_order ON findings(
 "#;
 
 pub(crate) struct ValidationStage {
-    connection: Connection,
+    pub(crate) connection: Connection,
     _directory: TempDir,
     #[cfg(test)]
     path: PathBuf,
@@ -82,10 +88,34 @@ impl ValidationStage {
         path: &str,
         kind: &str,
     ) -> Result<()> {
+        use rusqlite::OptionalExtension;
+        use unicode_casefold::UnicodeCaseFold;
+        let folded: String = path.case_fold().collect();
+        let existing: Option<String> = transaction
+            .query_row(
+                "SELECT path FROM entries WHERE folded_path=?1 AND path<>?2 LIMIT 1",
+                params![folded, path],
+                |r| r.get(0),
+            )
+            .optional()?;
         transaction.execute(
-            "INSERT INTO entries(path, kind) VALUES (?1, ?2)",
-            params![path, kind],
+            "INSERT INTO entries(path, kind, folded_path) VALUES (?1, ?2, ?3)",
+            params![path, kind, folded],
         )?;
+        if let Some(existing) = existing {
+            Self::insert_finding(
+                transaction,
+                &Finding {
+                    severity: crate::Severity::Warning,
+                    code: crate::FindingCode::OKF204,
+                    path: path.to_owned(),
+                    line: None,
+                    column: None,
+                    spec_section: Some("4.1".into()),
+                    message: format!("path collides under Unicode case folding with {existing}"),
+                },
+            )?;
+        }
         Ok(())
     }
 

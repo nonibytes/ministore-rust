@@ -128,12 +128,10 @@ fn validate_predicate_pattern(pred: &Predicate) -> Result<()> {
         }
         Predicate::PathGlob { pattern } => {
             // Validate path has literal prefix before wildcards
-            if pattern.contains(&['*', '?'][..]) {
-                if !has_literal_prefix(pattern) {
-                    return Err(MinistoreError::QueryRejected(
-                        "path pattern must have literal prefix before wildcards".into()
-                    ));
-                }
+            if pattern.contains(&['*', '?'][..]) && !has_literal_prefix(pattern) {
+                return Err(MinistoreError::QueryRejected(
+                    "path pattern must have literal prefix before wildcards".into()
+                ));
             }
         }
         _ => {}

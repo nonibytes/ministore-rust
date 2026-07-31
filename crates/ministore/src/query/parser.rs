@@ -253,23 +253,23 @@ impl Parser {
     }
 
     fn match_tok(&self, expected: &Tok) -> bool {
-        match (self.current(), expected) {
-            (Some(Tok::Colon), Tok::Colon) => true,
-            (Some(Tok::And), Tok::And) => true,
-            (Some(Tok::Or), Tok::Or) => true,
-            (Some(Tok::Not), Tok::Not) => true,
-            (Some(Tok::LParen), Tok::LParen) => true,
-            (Some(Tok::RParen), Tok::RParen) => true,
-            (Some(Tok::Gt), Tok::Gt) => true,
-            (Some(Tok::Gte), Tok::Gte) => true,
-            (Some(Tok::Lt), Tok::Lt) => true,
-            (Some(Tok::Lte), Tok::Lte) => true,
-            (Some(Tok::DotDot), Tok::DotDot) => true,
-            (Some(Tok::Ident(_)), Tok::Ident(_)) => true,
-            (Some(Tok::String(_)), Tok::String(_)) => true,
-            (Some(Tok::Number(_)), Tok::Number(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (self.current(), expected),
+            (Some(Tok::Colon), Tok::Colon)
+                | (Some(Tok::And), Tok::And)
+                | (Some(Tok::Or), Tok::Or)
+                | (Some(Tok::Not), Tok::Not)
+                | (Some(Tok::LParen), Tok::LParen)
+                | (Some(Tok::RParen), Tok::RParen)
+                | (Some(Tok::Gt), Tok::Gt)
+                | (Some(Tok::Gte), Tok::Gte)
+                | (Some(Tok::Lt), Tok::Lt)
+                | (Some(Tok::Lte), Tok::Lte)
+                | (Some(Tok::DotDot), Tok::DotDot)
+                | (Some(Tok::Ident(_)), Tok::Ident(_))
+                | (Some(Tok::String(_)), Tok::String(_))
+                | (Some(Tok::Number(_)), Tok::Number(_))
+        )
     }
 
     fn expect(&mut self, tok: &Tok) -> Result<()> {
@@ -422,7 +422,7 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Bool { field, value }) => {
                 assert_eq!(field, "active");
-                assert_eq!(value, false);
+                assert!(!value);
             }
             _ => panic!("expected Bool predicate"),
         }
@@ -460,7 +460,7 @@ mod tests {
         match expr {
             Expr::Pred(Predicate::Bool { field, value }) => {
                 assert_eq!(field, "archived");
-                assert_eq!(value, false);
+                assert!(!value);
             }
             _ => panic!("expected Bool predicate for shorthand"),
         }

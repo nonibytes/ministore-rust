@@ -8,6 +8,8 @@ use crate::staging::ValidationStage;
 use crate::{OkfError, Result};
 
 mod advisory;
+mod families;
+mod graph;
 mod reserved;
 
 const DEFAULT_TARGET_VERSION: &str = "0.2";
@@ -20,6 +22,15 @@ pub fn validate_bundle<F>(
 where
     F: FnMut(Finding) -> Result<()>,
 {
+    let (stage, summary) = prepare_bundle(root, options)?;
+    stage.emit_findings(emit)?;
+    Ok(summary)
+}
+
+pub(crate) fn prepare_bundle(
+    root: &Path,
+    options: &ValidateOptions,
+) -> Result<(ValidationStage, ValidationSummary)> {
     let metadata = fs::symlink_metadata(root)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(OkfError::InvalidBundle(format!(
@@ -43,10 +54,10 @@ where
         transaction.commit()?;
     }
     validate_staged_concepts(&mut stage, &root)?;
+    graph::resolve_staged_links(&mut stage)?;
     let declared_version = validate_staged_reserved_files(&mut stage, &root)?;
     let summary = stage.summary(root_string, target_version, declared_version)?;
-    stage.emit_findings(emit)?;
-    Ok(summary)
+    Ok((stage, summary))
 }
 
 fn enumerate_directory(
@@ -123,8 +134,22 @@ fn validate_staged_concepts(stage: &mut ValidationStage, root: &Path) -> Result<
         parsed
             .findings
             .extend(advisory::validate_concept_advisories(&parsed.value));
+        parsed
+            .findings
+            .extend(graph::validate_attested_resources(stage, &parsed.value)?);
+        let links = graph::extract_link_candidates(&parsed.value);
 
         let transaction = stage.transaction()?;
+        transaction.execute(
+            "INSERT INTO concepts(path,raw) VALUES (?1,?2)",
+            rusqlite::params![relative, raw],
+        )?;
+        for link in links {
+            transaction.execute(
+                "INSERT INTO link_candidates(source,destination,line,column) VALUES (?1,?2,?3,?4)",
+                rusqlite::params![relative, link.destination, link.line, link.column],
+            )?;
+        }
         for finding in &parsed.findings {
             ValidationStage::insert_finding(&transaction, finding)?;
         }

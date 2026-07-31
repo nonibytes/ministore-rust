@@ -15,6 +15,9 @@ pub enum OkfError {
     #[error("JSON staging error: {0}")]
     Json(#[from] serde_json::Error),
 
+    #[error("MiniStore error: {0}")]
+    Ministore(#[from] ministore::MinistoreError),
+
     #[error("invalid OKF bundle: {0}")]
     InvalidBundle(String),
 }

@@ -84,9 +84,6 @@ mod tests {
             loaded_schema.get("title").unwrap().weight,
             Some(5.0)
         );
-        assert_eq!(
-            loaded_schema.get("tags").unwrap().multi,
-            true
-        );
+        assert!(loaded_schema.get("tags").unwrap().multi);
     }
 }
