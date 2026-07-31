@@ -496,7 +496,10 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "proptest",
+ "rusqlite",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
  "yaml-rust2",
 ]

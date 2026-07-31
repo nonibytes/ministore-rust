@@ -1,0 +1,4 @@
+{"fixture":"valid/minimal","concepts":1,"errors":0,"warnings":0,"findings":[]}
+{"fixture":"invalid/missing-frontmatter","concepts":1,"errors":1,"warnings":0,"findings":[{"severity":"error","code":"OKF101","path":"concept.md","line":1,"column":1,"spec_section":"4.1"}]}
+{"fixture":"invalid/missing-type","concepts":1,"errors":1,"warnings":0,"findings":[{"severity":"error","code":"OKF105","path":"concept.md","spec_section":"4.1"}]}
+{"fixture":"invalid/invalid-yaml","concepts":1,"errors":1,"warnings":0,"findings":[{"severity":"error","code":"OKF103","path":"concept.md","spec_section":"4.1"}]}

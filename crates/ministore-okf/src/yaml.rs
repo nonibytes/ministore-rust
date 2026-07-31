@@ -235,7 +235,7 @@ pub(crate) fn parse_metadata(
             severity: Severity::Error,
             code: FindingCode::OKF103,
             path: path.to_owned(),
-            line: Some(error.marker().line() + 1),
+            line: Some(error.marker().line() + 2),
             column: Some(error.marker().col() + 1),
             spec_section: Some("4.1".to_owned()),
             message: format!("frontmatter is not parseable YAML: {}", error.info()),
@@ -373,7 +373,7 @@ impl MarkedEventReceiver for TreeBuilder {
             return;
         }
         let position = Position {
-            line: marker.line() + 1,
+            line: marker.line() + 2,
             column: marker.col() + 1,
         };
         match event {
