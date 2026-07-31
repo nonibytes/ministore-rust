@@ -373,7 +373,7 @@ impl MarkedEventReceiver for TreeBuilder {
             return;
         }
         let position = Position {
-            line: marker.line() + 2,
+            line: marker.line() + 1,
             column: marker.col() + 1,
         };
         match event {

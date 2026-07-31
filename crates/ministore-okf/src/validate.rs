@@ -7,6 +7,7 @@ use crate::model::{ValidateOptions, ValidationSummary};
 use crate::staging::ValidationStage;
 use crate::{OkfError, Result};
 
+mod advisory;
 mod reserved;
 
 const DEFAULT_TARGET_VERSION: &str = "0.2";
@@ -42,8 +43,8 @@ where
         transaction.commit()?;
     }
     validate_staged_concepts(&mut stage, &root)?;
-    validate_staged_reserved_files(&mut stage, &root)?;
-    let summary = stage.summary(root_string, target_version)?;
+    let declared_version = validate_staged_reserved_files(&mut stage, &root)?;
+    let summary = stage.summary(root_string, target_version, declared_version)?;
     stage.emit_findings(emit)?;
     Ok(summary)
 }
@@ -119,6 +120,9 @@ fn validate_staged_concepts(stage: &mut ValidationStage, root: &Path) -> Result<
         let raw = fs::read(root.join(&relative))?;
         let mut parsed = parse_document(&relative, &raw)?;
         parsed.findings.extend(validate_concept_base(&parsed.value));
+        parsed
+            .findings
+            .extend(advisory::validate_concept_advisories(&parsed.value));
 
         let transaction = stage.transaction()?;
         for finding in &parsed.findings {
@@ -128,7 +132,11 @@ fn validate_staged_concepts(stage: &mut ValidationStage, root: &Path) -> Result<
     }
 }
 
-fn validate_staged_reserved_files(stage: &mut ValidationStage, root: &Path) -> Result<()> {
+fn validate_staged_reserved_files(
+    stage: &mut ValidationStage,
+    root: &Path,
+) -> Result<Option<String>> {
+    let mut declared_version = None;
     for kind in ["index", "log"] {
         let mut after = String::new();
         loop {
@@ -138,7 +146,11 @@ fn validate_staged_reserved_files(stage: &mut ValidationStage, root: &Path) -> R
             after.clone_from(&relative);
             let raw = fs::read(root.join(&relative))?;
             let findings = if kind == "index" {
-                reserved::validate_index(&relative, &raw)?
+                let (findings, version) = reserved::validate_index_with_version(&relative, &raw)?;
+                if relative == "index.md" {
+                    declared_version = version;
+                }
+                findings
             } else {
                 reserved::validate_log(&relative, &raw)
             };
@@ -149,7 +161,7 @@ fn validate_staged_reserved_files(stage: &mut ValidationStage, root: &Path) -> R
             transaction.commit()?;
         }
     }
-    Ok(())
+    Ok(declared_version)
 }
 
 fn validate_concept_base(document: &crate::Document) -> Vec<Finding> {

@@ -121,7 +121,12 @@ impl ValidationStage {
             .optional()?)
     }
 
-    pub(crate) fn summary(&self, bundle: &str, target_version: &str) -> Result<ValidationSummary> {
+    pub(crate) fn summary(
+        &self,
+        bundle: &str,
+        target_version: &str,
+        declared_version: Option<String>,
+    ) -> Result<ValidationSummary> {
         let concepts = self.connection.query_row(
             "SELECT COUNT(*) FROM entries WHERE kind = 'concept'",
             [],
@@ -137,7 +142,7 @@ impl ValidationStage {
         )?;
         Ok(ValidationSummary {
             target_version: target_version.to_owned(),
-            declared_version: None,
+            declared_version,
             bundle: bundle.to_owned(),
             concepts,
             errors,

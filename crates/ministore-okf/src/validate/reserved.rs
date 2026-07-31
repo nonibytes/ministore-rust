@@ -3,6 +3,7 @@ use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 
 use crate::document::parse_document;
 use crate::finding::{Finding, FindingCode, Severity};
+use crate::yaml::NodeKind;
 use crate::Result;
 
 const UTF8_BOM: &[u8] = &[0xef, 0xbb, 0xbf];
@@ -11,18 +12,31 @@ struct IndexBody<'a> {
     source: Option<&'a [u8]>,
     offset: usize,
     findings: Vec<Finding>,
+    declared_version: Option<String>,
 }
 
+#[cfg(test)]
 pub(super) fn validate_index(path: &str, raw: &[u8]) -> Result<Vec<Finding>> {
+    Ok(validate_index_with_version(path, raw)?.0)
+}
+
+pub(super) fn validate_index_with_version(
+    path: &str,
+    raw: &[u8],
+) -> Result<(Vec<Finding>, Option<String>)> {
     let Ok(_) = std::str::from_utf8(raw) else {
-        return Ok(vec![invalid_utf8(path, raw, "index is not valid UTF-8")]);
+        return Ok((
+            vec![invalid_utf8(path, raw, "index is not valid UTF-8")],
+            None,
+        ));
     };
     let parsed_body = index_body(path, raw)?;
     let Some(body) = parsed_body.source else {
-        return Ok(parsed_body.findings);
+        return Ok((parsed_body.findings, parsed_body.declared_version));
     };
     let body_offset = parsed_body.offset;
     let mut findings = parsed_body.findings;
+    let declared_version = parsed_body.declared_version;
     let text = std::str::from_utf8(body).expect("index body was already validated as UTF-8");
     let mut depth = 0usize;
     let mut list_depth = 0usize;
@@ -119,7 +133,7 @@ pub(super) fn validate_index(path: &str, raw: &[u8]) -> Result<Vec<Finding>> {
             "index must contain heading sections made of link-first lists",
         ));
     }
-    Ok(findings)
+    Ok((findings, declared_version))
 }
 
 fn index_body<'a>(path: &str, raw: &'a [u8]) -> Result<IndexBody<'a>> {
@@ -142,6 +156,7 @@ fn index_body<'a>(path: &str, raw: &'a [u8]) -> Result<IndexBody<'a>> {
             source: Some(raw),
             offset: 0,
             findings: Vec::new(),
+            declared_version: None,
         });
     }
     let parsed = parse_document(path, raw)?;
@@ -158,14 +173,91 @@ fn index_body<'a>(path: &str, raw: &'a [u8]) -> Result<IndexBody<'a>> {
             source: body_offset.map(|offset| &raw[offset..]),
             offset: body_offset.unwrap_or(0),
             findings: vec![finding],
+            declared_version: None,
         });
     }
     let body_offset = parsed.value.body_offset();
+    let (declared_version, mut version_findings) =
+        validate_declared_version(path, parsed.value.metadata());
+    let mut findings = parsed.findings;
+    findings.append(&mut version_findings);
     Ok(IndexBody {
         source: body_offset.map(|offset| &raw[offset..]),
         offset: body_offset.unwrap_or(0),
-        findings: parsed.findings,
+        findings,
+        declared_version,
     })
+}
+
+fn validate_declared_version(
+    path: &str,
+    metadata: Option<&crate::yaml::Metadata>,
+) -> (Option<String>, Vec<Finding>) {
+    if path != "index.md" {
+        return (None, Vec::new());
+    }
+    let Some(metadata) = metadata else {
+        return (None, Vec::new());
+    };
+    let Some(node) = metadata.get("okf_version") else {
+        return (None, Vec::new());
+    };
+    let resolved = metadata.resolve(node);
+    let value = resolved.and_then(|node| match &node.kind {
+        NodeKind::Scalar(scalar) => Some(scalar.value.as_str()),
+        _ => None,
+    });
+    let declared_version = value.map(str::to_owned);
+    let position = resolved.map_or(node.position, |node| node.position);
+    if !value.is_some_and(valid_version) {
+        return (
+            declared_version,
+            vec![version_finding(
+                FindingCode::OKF206,
+                path,
+                position.line,
+                position.column,
+                "okf_version must use <major>.<minor> syntax",
+            )],
+        );
+    }
+    if value != Some("0.2") {
+        return (
+            declared_version,
+            vec![version_finding(
+                FindingCode::OKF207,
+                path,
+                position.line,
+                position.column,
+                "declared OKF version is not implemented exactly",
+            )],
+        );
+    }
+    (declared_version, Vec::new())
+}
+
+fn valid_version(value: &str) -> bool {
+    let Some((major, minor)) = value.split_once('.') else {
+        return false;
+    };
+    !major.is_empty()
+        && !minor.is_empty()
+        && !minor.contains('.')
+        && major.bytes().all(|byte| byte.is_ascii_digit())
+        && minor.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn version_finding(
+    code: FindingCode,
+    path: &str,
+    line: usize,
+    column: usize,
+    message: &str,
+) -> Finding {
+    let mut finding = reserved_finding(code, path, line, column, message);
+    finding.severity = Severity::Warning;
+    finding.spec_section = Some("12".into());
+    finding
 }
 
 pub(super) fn validate_log(path: &str, raw: &[u8]) -> Vec<Finding> {
@@ -217,7 +309,7 @@ fn invalid_utf8(path: &str, raw: &[u8], message: &str) -> Finding {
     reserved_finding(FindingCode::OKF100, path, line, column, message)
 }
 
-fn byte_position(raw: &[u8], offset: usize) -> (usize, usize) {
+pub(super) fn byte_position(raw: &[u8], offset: usize) -> (usize, usize) {
     let mut line = 1;
     let mut column = 1;
     for character in String::from_utf8_lossy(&raw[..offset.min(raw.len())]).chars() {
@@ -304,5 +396,31 @@ mod tests {
             log.iter().map(|finding| finding.code).collect::<Vec<_>>(),
             [FindingCode::OKF203]
         );
+    }
+
+    #[test]
+    fn validates_declared_version_syntax_and_support() {
+        let (valid, declared) = validate_index_with_version(
+            "index.md",
+            b"---\nokf_version: 0.2\n---\n# Concepts\n\n* [One](one.md)\n",
+        )
+        .unwrap();
+        assert!(valid.is_empty());
+        assert_eq!(declared.as_deref(), Some("0.2"));
+
+        let (unsupported, declared) = validate_index_with_version(
+            "index.md",
+            b"---\nokf_version: 0.3\n---\n# Concepts\n\n* [One](one.md)\n",
+        )
+        .unwrap();
+        assert_eq!(unsupported[0].code, FindingCode::OKF207);
+        assert_eq!(declared.as_deref(), Some("0.3"));
+
+        let (invalid, _) = validate_index_with_version(
+            "index.md",
+            b"---\nokf_version: v2\n---\n# Concepts\n\n* [One](one.md)\n",
+        )
+        .unwrap();
+        assert_eq!(invalid[0].code, FindingCode::OKF206);
     }
 }

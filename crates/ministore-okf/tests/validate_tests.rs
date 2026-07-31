@@ -10,6 +10,8 @@ use tempfile::TempDir;
 #[derive(Deserialize, Serialize)]
 struct NormalizedValidation {
     fixture: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    declared_version: Option<String>,
     concepts: usize,
     errors: usize,
     warnings: usize,
@@ -54,6 +56,7 @@ fn matches_base_validation_golden() {
         .unwrap();
         let actual = NormalizedValidation {
             fixture: expected.fixture,
+            declared_version: summary.declared_version,
             concepts: summary.concepts,
             errors: summary.errors,
             warnings: summary.warnings,
@@ -135,6 +138,33 @@ fn validates_base_conformance_fixtures() {
             errors: 1,
             warnings: 0,
             codes: &[FindingCode::OKF203],
+        },
+        Case {
+            name: "permissive/lifecycle-legacy",
+            concepts: 1,
+            errors: 0,
+            warnings: 5,
+            codes: &[
+                FindingCode::OKF320,
+                FindingCode::OKF321,
+                FindingCode::OKF330,
+                FindingCode::OKF340,
+                FindingCode::OKF341,
+            ],
+        },
+        Case {
+            name: "permissive/newer-version",
+            concepts: 1,
+            errors: 0,
+            warnings: 1,
+            codes: &[FindingCode::OKF207],
+        },
+        Case {
+            name: "permissive/scalar-tags",
+            concepts: 1,
+            errors: 0,
+            warnings: 1,
+            codes: &[FindingCode::OKF330],
         },
     ];
 
@@ -223,7 +253,6 @@ fn write_concept(root: &Path, relative: &str, source: &str) {
 
 fn assert_summary(summary: &ValidationSummary, concepts: usize, errors: usize, warnings: usize) {
     assert_eq!(summary.target_version, "0.2");
-    assert_eq!(summary.declared_version, None);
     assert_eq!(summary.concepts, concepts);
     assert_eq!(summary.errors, errors);
     assert_eq!(summary.warnings, warnings);

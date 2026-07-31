@@ -1,6 +1,9 @@
-{"fixture":"valid/minimal","concepts":1,"errors":0,"warnings":0,"findings":[]}
+{"fixture":"valid/minimal","declared_version":"0.2","concepts":1,"errors":0,"warnings":0,"findings":[]}
 {"fixture":"invalid/missing-frontmatter","concepts":1,"errors":1,"warnings":0,"findings":[{"severity":"error","code":"OKF101","path":"concept.md","line":1,"column":1,"spec_section":"4.1"}]}
 {"fixture":"invalid/missing-type","concepts":1,"errors":1,"warnings":0,"findings":[{"severity":"error","code":"OKF105","path":"concept.md","spec_section":"4.1"}]}
 {"fixture":"invalid/invalid-yaml","concepts":1,"errors":1,"warnings":0,"findings":[{"severity":"error","code":"OKF103","path":"concept.md","spec_section":"4.1"}]}
 {"fixture":"invalid/malformed-index","concepts":1,"errors":2,"warnings":0,"findings":[{"severity":"error","code":"OKF201","path":"index.md","line":3,"column":1,"spec_section":"4.1"},{"severity":"error","code":"OKF202","path":"index.md","line":5,"column":1,"spec_section":"4.1"}]}
 {"fixture":"invalid/malformed-log","concepts":0,"errors":1,"warnings":0,"findings":[{"severity":"error","code":"OKF203","path":"log.md","line":3,"column":1,"spec_section":"4.1"}]}
+{"fixture":"permissive/lifecycle-legacy","concepts":1,"errors":0,"warnings":5,"findings":[{"severity":"warning","code":"OKF320","path":"concept.md","line":3,"column":9,"spec_section":"5.4"},{"severity":"warning","code":"OKF321","path":"concept.md","line":4,"column":14,"spec_section":"5.5"},{"severity":"warning","code":"OKF330","path":"concept.md","line":5,"column":7,"spec_section":"4.1"},{"severity":"warning","code":"OKF340","path":"concept.md","line":6,"column":12,"spec_section":"13.1"},{"severity":"warning","code":"OKF341","path":"concept.md","line":12,"column":1,"spec_section":"13.1"}]}
+{"fixture":"permissive/newer-version","declared_version":"0.3","concepts":1,"errors":0,"warnings":1,"findings":[{"severity":"warning","code":"OKF207","path":"index.md","line":2,"column":14,"spec_section":"12"}]}
+{"fixture":"permissive/scalar-tags","concepts":1,"errors":0,"warnings":1,"findings":[{"severity":"warning","code":"OKF330","path":"concept.md","line":3,"column":7,"spec_section":"4.1"}]}
