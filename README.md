@@ -11,6 +11,7 @@ A lightweight, embedded document search engine built on SQLite and FTS5. Ministo
 - **Cursor-Based Pagination**: Efficient pagination for large result sets
 - **Schema Management**: Define schemas with multiple field types and multi-value support
 - **Batch Operations**: Transactional batch inserts and deletes
+- **Open Knowledge Format**: Validate and synchronize OKF v0.2 bundles into searchable indexes
 - **Zero Dependencies**: Single-file SQLite database with no external services
 - **CLI & Libraries**: Use from Rust, from Go without CGO, or as a standalone CLI
 
@@ -461,8 +462,8 @@ The query planner translates the query language into optimized SQL, leveraging S
 
 ## Open Knowledge Format (OKF)
 
-The CLI validates and atomically synchronizes OKF v0.2 bundles into a dedicated
-SQLite index:
+Validate an OKF v0.2 bundle, synchronize it into a dedicated SQLite index, and
+search its concepts with ordinary MiniStore queries:
 
 ```bash
 ministore okf validate --bundle ./knowledge --format json
@@ -470,17 +471,14 @@ ministore okf sync --bundle ./knowledge --index knowledge.db
 ministore okf sync --bundle ./knowledge --index knowledge.db --dry-run
 ```
 
-`--strict` makes advisory warnings fail the command. Processing stages bundle and
-graph state in a private temporary SQLite database and materializes one concept at
-a time, so aggregate bundle bytes are not retained in application memory. The
-stage can contain sensitive source and is removed on success and handled failure;
-use the platform temporary-directory setting to place it on appropriately sized
-storage. Exact input is retrievable from `raw_document` after synchronization.
+`--strict` makes warnings fail validation and block synchronization. Synchronization
+is atomic, preserves the exact source in `raw_document`, and uses disk-backed
+staging instead of retaining the bundle in RAM. The target is dedicated to one
+bundle: paths absent from the bundle are deleted.
 
-The target must use the canonical OKF schema and is treated as dedicated to the
-selected bundle; absent paths are deleted. To rebuild, remove that dedicated index
-and synchronize again. Ordinary MiniStore queries can filter fields such as
-`trust_tier`, `tags`, `source_resources`, and `backlinks`.
+See the [OKF user guide](docs/okf.md) for bundle structure, commands, reports,
+projected fields, queries, links, library integration, storage behavior, and
+troubleshooting.
 
 ## Contributing
 
