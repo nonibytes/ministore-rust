@@ -5,6 +5,18 @@ v0.2 bundle and synchronize its concepts into a searchable MiniStore index. The
 source Markdown remains the authority. The index is a deterministic projection
 that can be rebuilt whenever the bundle changes.
 
+## Official OKF resources
+
+- [OKF project and reference implementation](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf)
+- [OKF v0.2 specification](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+- [Reference implementation documentation](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/README.md)
+- [Example OKF bundles](https://github.com/GoogleCloudPlatform/knowledge-catalog/tree/main/okf/bundles)
+- [Introducing the Open Knowledge Format](https://cloud.google.com/blog/products/data-analytics/how-the-open-knowledge-format-can-improve-data-sharing/)
+- [Open Knowledge Format v0.2: trust signals](https://cloud.google.com/blog/products/data-analytics/okf-v0-2-adds-trust-signals/)
+
+The upstream specification defines the format. This guide describes how the Rust
+implementation validates and indexes that format.
+
 ## What MiniStore does
 
 MiniStore's OKF support:
