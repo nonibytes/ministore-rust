@@ -1,13 +1,9 @@
-# Open Knowledge Format user guide
+# Open Knowledge Format user guide for Rust
 
-MiniStore can validate an Open Knowledge Format (OKF) v0.2 bundle and synchronize
-its concepts into a searchable MiniStore index. The source Markdown remains the
-authority. The index is a deterministic projection that can be rebuilt whenever
-the bundle changes.
-
-This guide covers the Go and Rust implementations. Their OKF validation,
-projections, hashes, SQLite indexes, JSON reports, and query behavior are
-compatible. The Go CLI additionally supports PostgreSQL targets.
+The Rust implementation of MiniStore can validate an Open Knowledge Format (OKF)
+v0.2 bundle and synchronize its concepts into a searchable MiniStore index. The
+source Markdown remains the authority. The index is a deterministic projection
+that can be rebuilt whenever the bundle changes.
 
 ## What MiniStore does
 
@@ -21,8 +17,7 @@ MiniStore's OKF support:
 - derives trust, lifecycle, provenance, and computation fields;
 - creates a fixed, searchable MiniStore projection;
 - synchronizes additions, edits, backlink-only changes, renames, and deletions in
-  one target transaction; and
-- produces compatible results in Go and Rust.
+  one target transaction.
 
 MiniStore does not fetch external resources, execute computations, run executors
 or attesters, or treat trust metadata as authorization. Those values are validated
@@ -174,26 +169,15 @@ more precise without changing a code's meaning.
 | `OKF350`–`OKF360` | Attested Computation contracts and source footnotes |
 | `OKF400`–`OKF402` | Missing links, root escapes, and unsafe percent encoding |
 
-The public Go `FindingCode` constants and Rust `FindingCode` enum contain the full
-catalog.
+The public Rust `FindingCode` enum contains the full catalog.
 
 ## Synchronize a bundle
 
-SQLite in Go or Rust:
+SQLite:
 
 ```text
 ministore okf sync --bundle DIR --index INDEX
                    [--strict] [--dry-run] [--format pretty|json]
-```
-
-PostgreSQL with the Go CLI:
-
-```bash
-ministore okf sync \
-  --bundle ./knowledge \
-  --index 'postgres://user:password@localhost/knowledge?sslmode=require' \
-  --backend postgres \
-  --schema-name okf_catalog
 ```
 
 Synchronization performs these operations:
@@ -226,8 +210,7 @@ concept.
 If the target is missing, the CLI creates it with the canonical OKF schema. If it
 exists with any other schema, synchronization refuses it. MiniStore does not embed
 a bundle identity in the index, so selecting a compatible index for the wrong
-bundle replaces its contents. Always use a distinct index path or PostgreSQL schema
-for each bundle.
+bundle replaces its contents. Always use a distinct index path for each bundle.
 
 ### Dry run
 
@@ -402,68 +385,6 @@ executes or fetches computation content.
 The CLI creates a missing index. The library synchronization functions require an
 already open index whose schema exactly equals the canonical OKF projection schema.
 
-### Go
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-
-    "github.com/ministore/ministore/ministore"
-    "github.com/ministore/ministore/ministore/storage/sqlite"
-    "github.com/ministore/ministore/okf"
-)
-
-func main() {
-    ctx := context.Background()
-
-    // Validate and stream findings without collecting the whole report in RAM.
-    summary, err := okf.ValidateBundle(
-        ctx,
-        "./knowledge",
-        okf.ValidateOptions{},
-        func(finding okf.Finding) error {
-            fmt.Printf("%s %s: %s\n", finding.Severity, finding.Path, finding.Message)
-            return nil
-        },
-    )
-    if err != nil {
-        panic(err)
-    }
-    if !summary.OK() {
-        panic("bundle is not conformant")
-    }
-
-    ix, err := ministore.Create(
-        ctx,
-        sqlite.New("knowledge.db"),
-        okf.ProjectionSchema(),
-        ministore.DefaultIndexOptions(),
-    )
-    if err != nil {
-        panic(err)
-    }
-    defer ix.Close()
-
-    report, err := okf.Sync(ctx, "./knowledge", ix, okf.SyncOptions{})
-    if err != nil {
-        panic(err)
-    }
-    fmt.Printf("added=%d updated=%d deleted=%d\n",
-        report.Added, report.Updated, report.Deleted)
-}
-```
-
-Use `ministore.Open` instead of `ministore.Create` for an existing target. Go's
-`context.Context` cancels filesystem, staging, and database work.
-
-`okf.WalkProjections` streams canonical projections in source-path order when an
-application needs the projection without synchronization.
-
-### Rust
-
 Add the OKF crate alongside `ministore` in the workspace or application:
 
 ```toml
@@ -543,12 +464,6 @@ not deliberately expose a partially synchronized state.
 Concurrent synchronizations against one target are unsupported. Serialize sync
 jobs per index. A bundle can change while being read; the next synchronization
 converges the index to the later filesystem state.
-
-For PostgreSQL, synchronization can hold a long transaction and generate
-substantial WAL for a large change set. Provision WAL and temporary storage,
-monitor replicas, and schedule large synchronizations accordingly. Search can
-continue while staging; database transaction semantics govern readers during the
-final apply.
 
 ## Troubleshooting
 
