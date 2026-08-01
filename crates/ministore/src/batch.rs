@@ -1,9 +1,9 @@
-use serde_json::Value;
-use crate::{Result, Schema};
-use rusqlite::{Transaction, OptionalExtension};
-use crate::db::put::{prepare_put, execute_put, now_ms};
 use crate::db::delete::delete_by_item_id;
+use crate::db::put::{execute_put, now_ms, prepare_put};
 use crate::db::sql::SQL_FIND_ITEM_ID_BY_PATH;
+use crate::{MinistoreError, Result, Schema};
+use rusqlite::{OptionalExtension, Transaction};
+use serde_json::Value;
 
 /// Batch operation types.
 #[derive(Debug, Clone)]
@@ -12,9 +12,94 @@ enum BatchOp {
     Delete(String),
 }
 
-/// Batch transaction for multiple operations.
+/// An in-memory collection of operations.
 pub struct Batch {
     ops: Vec<BatchOp>,
+}
+
+/// Applies operations immediately inside one transaction.
+///
+/// A writer is valid only during the callback that receives it and must not be
+/// used concurrently.
+pub struct BatchWriter<'writer, 'connection> {
+    tx: &'writer Transaction<'connection>,
+    schema: &'writer Schema,
+    now_ms: i64,
+    count: usize,
+    failed: bool,
+}
+
+impl<'writer, 'connection> BatchWriter<'writer, 'connection> {
+    pub(crate) fn new(tx: &'writer Transaction<'connection>, schema: &'writer Schema) -> Self {
+        Self {
+            tx,
+            schema,
+            now_ms: now_ms(),
+            count: 0,
+            failed: false,
+        }
+    }
+
+    /// Insert or replace one JSON document in the current transaction.
+    pub fn put_json(&mut self, doc: Value) -> Result<()> {
+        self.ready()?;
+        let result = prepare_put(self.schema, doc)
+            .and_then(|prepared| execute_put(self.tx, self.schema, prepared, self.now_ms));
+        match result {
+            Ok(()) => {
+                self.count += 1;
+                Ok(())
+            }
+            Err(error) => {
+                self.failed = true;
+                Err(error)
+            }
+        }
+    }
+
+    /// Delete a path in the current transaction. A missing path is a no-op.
+    pub fn delete(&mut self, path: &str) -> Result<()> {
+        self.ready()?;
+        if path.is_empty() {
+            self.failed = true;
+            return Err(MinistoreError::InvalidArgument(
+                "path cannot be empty".into(),
+            ));
+        }
+
+        let result = (|| {
+            let item_id: Option<i64> = self
+                .tx
+                .query_row(SQL_FIND_ITEM_ID_BY_PATH, [path], |row| row.get(0))
+                .optional()?;
+            if let Some(item_id) = item_id {
+                delete_by_item_id(self.tx, item_id)?;
+                self.count += 1;
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.count
+    }
+
+    pub(crate) fn failed(&self) -> bool {
+        self.failed
+    }
+
+    fn ready(&self) -> Result<()> {
+        if self.failed {
+            return Err(MinistoreError::Internal(
+                "batch transaction is already marked for rollback".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Batch {
@@ -35,33 +120,21 @@ impl Batch {
         Ok(())
     }
 
-    /// Execute all batch operations in a transaction.
-    pub fn execute(self, tx: &Transaction, schema: &Schema) -> Result<usize> {
-        let now = now_ms();
-        let mut count = 0;
+    /// Execute all batch operations in an existing transaction.
+    pub fn execute(self, tx: &Transaction<'_>, schema: &Schema) -> Result<usize> {
+        let mut writer = BatchWriter::new(tx, schema);
+        self.write_to(&mut writer)?;
+        Ok(writer.count())
+    }
 
+    pub(crate) fn write_to(self, writer: &mut BatchWriter<'_, '_>) -> Result<()> {
         for op in self.ops {
             match op {
-                BatchOp::Put(doc) => {
-                    let prepared = prepare_put(schema, doc)?;
-                    execute_put(tx, schema, prepared, now)?;
-                    count += 1;
-                }
-                BatchOp::Delete(path) => {
-                    // Find item ID
-                    let item_id: Option<i64> = tx
-                        .query_row(SQL_FIND_ITEM_ID_BY_PATH, [&path], |row| row.get(0))
-                        .optional()?;
-
-                    if let Some(id) = item_id {
-                        delete_by_item_id(tx, id)?;
-                        count += 1;
-                    }
-                }
+                BatchOp::Put(doc) => writer.put_json(doc)?,
+                BatchOp::Delete(path) => writer.delete(&path)?,
             }
         }
-
-        Ok(count)
+        Ok(())
     }
 
     /// Get the number of operations in the batch.

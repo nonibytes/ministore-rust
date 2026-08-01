@@ -5,6 +5,7 @@ pub const SQL_SET_META: &str = "INSERT INTO meta(key,value) VALUES(?1,?2) ON CON
 
 pub const SQL_FIND_ITEM_ID_BY_PATH: &str = "SELECT id FROM items WHERE path = ?1";
 pub const SQL_GET_ITEM_BY_PATH: &str = "SELECT id, data_json, created_at, updated_at FROM items WHERE path = ?1";
+pub const SQL_SCAN_PATHS: &str = "SELECT path FROM items WHERE substr(path, 1, length(?1)) = ?1 ORDER BY path COLLATE BINARY";
 
 pub const SQL_DELETE_SEARCH_ROW: &str = "DELETE FROM search WHERE rowid = ?1";
 pub const SQL_DELETE_PRESENT_BY_ITEM: &str = "DELETE FROM field_present WHERE item_id = ?1";

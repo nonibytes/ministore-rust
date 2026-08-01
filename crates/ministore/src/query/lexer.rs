@@ -246,6 +246,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::approx_constant)]
     fn test_lex_number() {
         let tokens = lex("3.14").unwrap();
         assert_eq!(tokens[0], Tok::Number(3.14));

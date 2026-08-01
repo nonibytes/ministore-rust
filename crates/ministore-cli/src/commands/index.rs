@@ -126,7 +126,7 @@ pub fn run(cmd: IndexCmd) -> Result<()> {
             for entry in std::fs::read_dir(cwd)? {
                 let entry = entry?;
                 let path = entry.path();
-                if path.extension().map_or(false, |e| e == "db") {
+                if path.extension().is_some_and(|e| e == "db") {
                      // Try to open and check magic?
                      if let Ok(idx) = Index::open(&path, IndexOptions::default()) {
                          // If opens, it's valid?

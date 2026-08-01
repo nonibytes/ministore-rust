@@ -22,5 +22,5 @@ pub use index::{
     OutputFieldSelector, SearchResultPage,
 };
 pub use db::search::SearchOptions;
-pub use batch::Batch;
+pub use batch::{Batch, BatchWriter};
 pub use output::{format_search_results, SearchOutputFormat, SearchOutputOptions};

@@ -710,8 +710,8 @@ mod tests {
         let expr = parse_query("has:title").unwrap();
         let output = compile_to_ctes(&schema, expr, 0).unwrap();
         
-        assert!(output.ctes.len() > 0);
-        assert!(output.explain_steps.len() > 0);
+        assert!(!output.ctes.is_empty());
+        assert!(!output.explain_steps.is_empty());
     }
 
     #[test]
@@ -735,6 +735,6 @@ mod tests {
         let expr = parse_query("tag:rust").unwrap();
         let output = compile_to_ctes(&schema, expr, 0).unwrap();
         
-        assert!(output.ctes.len() > 0);
+        assert!(!output.ctes.is_empty());
     }
 }

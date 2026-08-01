@@ -11,6 +11,7 @@ A lightweight, embedded document search engine built on SQLite and FTS5. Ministo
 - **Cursor-Based Pagination**: Efficient pagination for large result sets
 - **Schema Management**: Define schemas with multiple field types and multi-value support
 - **Batch Operations**: Transactional batch inserts and deletes
+- **Open Knowledge Format**: Validate and synchronize OKF v0.2 bundles into searchable indexes
 - **Zero Dependencies**: Single-file SQLite database with no external services
 - **CLI & Libraries**: Use from Rust, from Go without CGO, or as a standalone CLI
 
@@ -458,6 +459,26 @@ Ministore is built on:
 - **purego ABI**: Idiomatic Go API without compiling the Go application with CGO
 
 The query planner translates the query language into optimized SQL, leveraging SQLite's query optimizer and FTS5's ranking capabilities.
+
+## Open Knowledge Format (OKF)
+
+Validate an OKF v0.2 bundle, synchronize it into a dedicated SQLite index, and
+search its concepts with ordinary MiniStore queries:
+
+```bash
+ministore okf validate --bundle ./knowledge --format json
+ministore okf sync --bundle ./knowledge --index knowledge.db
+ministore okf sync --bundle ./knowledge --index knowledge.db --dry-run
+```
+
+`--strict` makes warnings fail validation and block synchronization. Synchronization
+is atomic, preserves the exact source in `raw_document`, and uses disk-backed
+staging instead of retaining the bundle in RAM. The target is dedicated to one
+bundle: paths absent from the bundle are deleted.
+
+See the [OKF user guide](docs/okf.md) for bundle structure, commands, reports,
+projected fields, queries, links, library integration, storage behavior, and
+troubleshooting.
 
 ## Contributing
 

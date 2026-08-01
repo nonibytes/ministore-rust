@@ -1,0 +1,2 @@
+Ancillary files participate in path existence checks but are not projected.
+

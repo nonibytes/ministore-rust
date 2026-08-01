@@ -261,6 +261,26 @@ impl Index {
         })
     }
 
+    /// Yield item paths with the literal prefix in ascending bytewise order.
+    ///
+    /// The callback must not recursively operate on this index because the scan
+    /// retains the index connection lock while rows are being yielded.
+    pub fn scan_paths<F>(&self, prefix: &str, mut yield_path: F) -> Result<()>
+    where
+        F: FnMut(&str) -> Result<()>,
+    {
+        use crate::db::sql::SQL_SCAN_PATHS;
+
+        let conn = self.conn()?;
+        let mut statement = conn.prepare(SQL_SCAN_PATHS)?;
+        let mut rows = statement.query([prefix])?;
+        while let Some(row) = rows.next()? {
+            let path: String = row.get(0)?;
+            yield_path(&path)?;
+        }
+        Ok(())
+    }
+
     /// Peek at an item (just the JSON).
     pub fn peek(&self, path: &str) -> Result<Value> {
         let view = self.get(path)?;
@@ -409,7 +429,7 @@ impl Index {
         };
 
         let items_view: Vec<ItemView> = rows.into_iter()
-            .map(|r| search_row_to_item_view(r))
+            .map(search_row_to_item_view)
             .collect::<Result<Vec<_>>>()?;
             
         let items: Vec<Value> = items_view.into_iter()
@@ -562,8 +582,7 @@ impl Index {
         let conn = self.conn()?;
         
         // Add new text columns
-        for i in current_text.len()..new_text.len() {
-            let (name, _) = &new_text[i];
+        for (name, _) in new_text.iter().skip(current_text.len()) {
             let sql = format!("ALTER TABLE search ADD COLUMN {}", name);
             conn.execute(&sql, [])?;
         }
@@ -579,13 +598,37 @@ impl Index {
         Ok(())
     }
 
-    /// Execute a batch of operations in a transaction.
-    pub fn batch(&self, batch: crate::batch::Batch) -> Result<usize> {
+    /// Stream operations into one transaction and commit only if the callback
+    /// and every writer operation succeed.
+    ///
+    /// The callback must not recursively operate on this index because the
+    /// connection lock is retained for the transaction.
+    pub fn write_batch<F>(&self, write: F) -> Result<usize>
+    where
+        F: FnOnce(&mut crate::batch::BatchWriter<'_, '_>) -> Result<()>,
+    {
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
-        let count = batch.execute(&tx, &self.schema)?;
+        let (count, failed) = {
+            let mut writer = crate::batch::BatchWriter::new(&tx, &self.schema);
+            write(&mut writer)?;
+            (writer.count(), writer.failed())
+        };
+        if failed {
+            return Err(MinistoreError::Internal(
+                "batch operation failed; transaction rolled back".into(),
+            ));
+        }
         tx.commit()?;
         Ok(count)
+    }
+
+    /// Execute an in-memory batch through the streamed transaction writer.
+    pub fn batch(&self, batch: crate::batch::Batch) -> Result<usize> {
+        if batch.is_empty() {
+            return Ok(0);
+        }
+        self.write_batch(|writer| batch.write_to(writer))
     }
 }
 
